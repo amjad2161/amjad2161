@@ -332,6 +332,100 @@ class OrbitalNav:
         self._tracking = False
         log.info("orbital_nav.tracking_stop")
 
+    # ── Geofencing ────────────────────────────────────────────────────────────
+
+    def geofence_circle(
+        self,
+        point: Coordinate,
+        center: Coordinate,
+        radius_m: float,
+    ) -> bool:
+        """Return True if `point` is inside the circular geofence."""
+        return point.distance_to(center) <= radius_m
+
+    def geofence_polygon(
+        self,
+        point: Coordinate,
+        polygon: list[Coordinate],
+    ) -> bool:
+        """
+        Point-in-polygon test using the ray-casting algorithm.
+        `polygon` must be an ordered list of vertices (last != first).
+        """
+        if len(polygon) < 3:
+            return False
+        n = len(polygon)
+        inside = False
+        x, y = point.lon, point.lat
+        j = n - 1
+        for i in range(n):
+            xi, yi = polygon[i].lon, polygon[i].lat
+            xj, yj = polygon[j].lon, polygon[j].lat
+            if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / (yj - yi + 1e-12) + xi):
+                inside = not inside
+            j = i
+        return inside
+
+    # ── Multi-stop Routing (Greedy TSP) ───────────────────────────────────────
+
+    async def route_multi_stop(
+        self,
+        origin: Coordinate,
+        stops: list[Coordinate],
+        mode: TransportMode = TransportMode.DRIVE,
+    ) -> list[Route]:
+        """
+        Compute a nearest-neighbour route through multiple stops.
+        Returns a list of per-leg routes.
+        """
+        if not stops:
+            return []
+
+        remaining = list(stops)
+        current = origin
+        legs: list[Route] = []
+
+        while remaining:
+            # Pick the nearest remaining stop
+            nearest = min(remaining, key=lambda c: current.distance_to(c))
+            leg = await self.route(current, nearest, mode=mode, alternatives=0)
+            legs.append(leg)
+            current = nearest
+            remaining.remove(nearest)
+
+        log.info(
+            "orbital_nav.multi_stop",
+            legs=len(legs),
+            total_km=round(sum(l.distance_km for l in legs), 2),
+        )
+        return legs
+
+    # ── ETA-only (fast path, no full route computation) ──────────────────────
+
+    def estimate_eta(
+        self,
+        origin: Coordinate,
+        destination: Coordinate,
+        mode: TransportMode = TransportMode.DRIVE,
+    ) -> dict[str, float]:
+        """Quick ETA estimate using haversine + typical speeds."""
+        distance_m = origin.distance_to(destination)
+        speed_kmh = {
+            "driving":     60,
+            "walking":     5,
+            "cycling":     20,
+            "drone":       180,     # m/s * 3.6 for 50 m/s
+            "spacecraft":  28_080,  # m/s * 3.6 for 7800 m/s
+        }.get(mode.value, 50)
+        speed_ms = speed_kmh / 3.6
+        return {
+            "distance_m": round(distance_m, 1),
+            "distance_km": round(distance_m / 1000, 2),
+            "duration_s": round(distance_m / speed_ms, 1),
+            "eta_minutes": round((distance_m / speed_ms) / 60, 1),
+            "speed_kmh": speed_kmh,
+        }
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:

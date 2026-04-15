@@ -87,16 +87,28 @@ async def security_middleware(request: Request, call_next):
     if not shield.check_rate_limit(client_ip):
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
 
-    # Scan body for injection on write methods
+    # Scan string values in JSON body for injection on write methods
+    # (scan parsed field values, not raw JSON, to avoid false positives on natural English)
     if request.method in ("POST", "PUT", "PATCH"):
-        try:
-            body_bytes = await request.body()
-            body_str = body_bytes.decode("utf-8", errors="ignore")
-            threat = shield.scan_input(body_str, source_ip=client_ip)
-            if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
-                return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
-        except Exception:
-            pass
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                import json as _json
+                body_bytes = await request.body()
+                body_str = body_bytes.decode("utf-8", errors="ignore")
+                try:
+                    body_json = _json.loads(body_str)
+                except _json.JSONDecodeError:
+                    body_json = {}
+                # Only scan explicitly user-supplied string fields, not all JSON text
+                _SCAN_FIELDS = {"prompt", "text", "message", "subject", "description", "query"}
+                for key, val in (body_json.items() if isinstance(body_json, dict) else []):
+                    if key in _SCAN_FIELDS and isinstance(val, str):
+                        threat = shield.scan_input(val, source_ip=client_ip)
+                        if threat and threat.threat_level.value >= 3:
+                            return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
+            except Exception:
+                pass
 
     response = await call_next(request)
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
@@ -448,3 +460,53 @@ async def analyze_image(request: Request):
 async def image_info(request: Request):
     image_bytes = await request.body()
     return vision.image_info(image_bytes)
+
+
+# ── GANE AGENT LAYER ─────────────────────────────────────────────────────────
+
+from brainiac.agent import AgentRouter  # noqa: E402
+
+_agent_router = AgentRouter(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    telem=telem,
+    creative=creative,
+    auto_approve=True,
+)
+
+
+@app.post("/api/v1/agent/run", tags=["GANE-AGENT"])
+async def agent_run(request: Request):
+    """
+    Dispatch a prompt to the GANE multi-agent system.
+    Automatically routes to the best specialist agent (telemetry or medical).
+
+    Body: {"prompt": "...", "agent": "telemetry|medical|auto"}
+    """
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    result = await _agent_router.run(prompt)
+    return {
+        "agent_used": result.agent_used,
+        "routing_reason": result.routing_reason,
+        "response": result.episode.response,
+        "episode_id": result.episode.episode_id,
+        "tool_calls": result.episode.tool_calls,
+        "tokens_used": result.episode.tokens_used,
+        "cost_usd": result.episode.cost_usd,
+        "success": result.episode.success,
+        "duration_ms": round(result.total_ms, 1),
+    }
+
+
+@app.get("/api/v1/agent/diagnostics", tags=["GANE-AGENT"])
+async def agent_diagnostics():
+    """Return diagnostics for all GANE agents and shared memory."""
+    return _agent_router.diagnostics()
+
+
+@app.get("/api/v1/agent/memory", tags=["GANE-AGENT"])
+async def agent_memory():
+    """Return a summary of the agent memory store."""
+    return _agent_router.memory.diagnostics()

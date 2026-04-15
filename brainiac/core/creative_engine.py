@@ -181,12 +181,18 @@ class CreativeEngine:
 
     def generate_svg_badge(self, text: str, color: str = "#00f5ff") -> str:
         """Generate a simple SVG status badge."""
+        import html
+        import re
+        # Validate color: only allow valid hex colors to prevent attribute injection
+        if not re.match(r"^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$", color):
+            color = "#00f5ff"
+        safe_text = html.escape(text, quote=True)
         width = max(60, len(text) * 8 + 20)
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="20">'
             f'<rect width="{width}" height="20" rx="3" fill="#0d0d0d"/>'
             f'<text x="{width//2}" y="14" font-family="monospace" font-size="11" '
-            f'fill="{color}" text-anchor="middle">{text}</text>'
+            f'fill="{color}" text-anchor="middle">{safe_text}</text>'
             f'</svg>'
         )
 
