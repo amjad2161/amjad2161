@@ -27,7 +27,12 @@ def test_health(client):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 12
+    expected_modules = {
+        "neuro_core", "orbital_nav", "satlink", "sonic_matrix",
+        "nexus_sync", "telemetry_hub", "cyber_shield", "creative_engine", "omni_vision",
+        "ins", "medical_protocols", "localization",
+    }
+    assert set(data["modules"]) == expected_modules
     for mod_status in data["modules"].values():
         assert mod_status == "ONLINE"
     assert data["uptime_s"] >= 0

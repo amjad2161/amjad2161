@@ -26,14 +26,14 @@ class Brainiac:
         self.shield = CyberShield(secret_key=secret_key)
         self.satlink = SatLink()
         self.mission_planner = MissionPlanner(
-            neuro=self._stub_neuro(),
+            neuro=self._StubNeuro(),
             nav=self.nav,
             medical=self.medical,
             shield=self.shield,
         )
         self._pending_tasks: set[asyncio.Task] = set()
 
-    class _stub_neuro:
+    class _StubNeuro:
         async def think(self, prompt: str):  # pragma: no cover - not used in tests
             return prompt
 

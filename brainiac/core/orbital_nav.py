@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -178,10 +177,10 @@ class OrbitalNav:
         for system in self.GNSS_SYSTEMS:
             statuses.append(SatelliteStatus(
                 system=system,
-                satellites_visible=12 + random.randint(0, 2),
-                satellites_used=10 + random.randint(0, 1),
-                hdop=0.6 + random.uniform(0, 0.1),
-                pdop=0.9 + random.uniform(0, 0.1),
+                satellites_visible=12,
+                satellites_used=10,
+                hdop=0.6,
+                pdop=0.9,
                 fix_type="RTK_FIXED" if self.precision == PrecisionMode.RTK else "3D",
             ))
         self._satellites = statuses

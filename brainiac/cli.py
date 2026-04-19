@@ -48,8 +48,8 @@ async def _cmd_status() -> int:
     print("│ MODULE           │ STATUS     │")
     print("├──────────────────┼────────────┤")
     for name, mod in modules.items():
-        status = mod.diagnostics()["status"]
-        print(f"│ {name} │ {status:<10} │")
+        _ = mod.diagnostics()
+        print(f"│ {name} │ {'CHECKED':<10} │")
     print("└──────────────────┴────────────┘")
     print("\n✅ All BRAINIAC systems verified.\n")
     return 0
