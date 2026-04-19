@@ -2,7 +2,8 @@
 NEXUS-SYNC — Universal Integration Hub
 ========================================
 Connects BRAINIAC to IoT, industrial SCADA, vehicles, smart cities,
-medical devices, drones — via MQTT, WebSocket, REST, gRPC, OPC-UA.
+medical devices, drones — via MQTT, WebSocket, REST, gRPC, OPC-UA,
+LoRaWAN, BLE Mesh, and V2X (Vehicle-to-Everything).
 """
 from __future__ import annotations
 
@@ -28,6 +29,9 @@ class Protocol(str, Enum):
     MODBUS = "Modbus"
     COAP = "CoAP"
     AMQP = "AMQP"
+    LORAWAN = "LoRaWAN"
+    BLE_MESH = "BLE_Mesh"
+    V2X = "V2X"
 
 
 class DeviceType(str, Enum):
@@ -41,6 +45,9 @@ class DeviceType(str, Enum):
     SATELLITE_GROUND = "satellite_ground"
     ROBOT = "robot"
     WEARABLE = "wearable"
+    MESH_NODE = "mesh_node"
+    V2X_RSU = "v2x_rsu"          # Roadside Unit
+    V2X_OBU = "v2x_obu"          # On-Board Unit
 
 
 @dataclass
@@ -237,6 +244,127 @@ class NexusSync:
         log.info("nexus_sync.command", device=device_id, cmd=command)
         return response
 
+    # ── Mesh Networking (LoRaWAN / BLE) ─────────────────────────────────────
+
+    async def broadcast_mesh(
+        self,
+        payload: dict[str, Any],
+        protocol: Protocol = Protocol.LORAWAN,
+        ttl: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Broadcast a message to all connected mesh nodes.
+
+        Used for off-grid P2P navigation data sharing when cellular is unavailable.
+        TTL controls hop count for multi-hop mesh relay.
+        """
+        mesh_devices = [
+            d for d in self._devices.values()
+            if d.connected and d.protocol in (Protocol.LORAWAN, Protocol.BLE_MESH)
+        ]
+        delivered = []
+        for device in mesh_devices:
+            msg = await self.publish(
+                device.device_id, "mesh/broadcast",
+                {**payload, "ttl": ttl, "mesh_protocol": protocol.value},
+            )
+            delivered.append(device.device_id)
+
+        log.info("nexus_sync.mesh_broadcast", nodes=len(delivered), protocol=protocol.value)
+        return {
+            "protocol": protocol.value,
+            "nodes_reached": len(delivered),
+            "device_ids": delivered,
+            "ttl": ttl,
+        }
+
+    def mesh_topology(self) -> dict[str, Any]:
+        """Return the current mesh network topology."""
+        mesh_nodes = [
+            d for d in self._devices.values()
+            if d.protocol in (Protocol.LORAWAN, Protocol.BLE_MESH)
+        ]
+        return {
+            "total_nodes": len(mesh_nodes),
+            "connected_nodes": sum(1 for n in mesh_nodes if n.connected),
+            "protocols": list({n.protocol.value for n in mesh_nodes}),
+            "nodes": [
+                {
+                    "device_id": n.device_id,
+                    "protocol": n.protocol.value,
+                    "connected": n.connected,
+                    "last_seen": n.last_seen,
+                }
+                for n in mesh_nodes
+            ],
+        }
+
+    # ── V2X (Vehicle-to-Everything) ──────────────────────────────────────────
+
+    async def v2x_signal(
+        self,
+        signal_type: str,
+        data: dict[str, Any],
+        source_id: str = "gane-node",
+    ) -> dict[str, Any]:
+        """
+        Send a V2X message to roadside units and nearby vehicles.
+
+        signal_type: V2I (vehicle-to-infrastructure), V2V (vehicle-to-vehicle),
+                     V2P (vehicle-to-pedestrian), V2N (vehicle-to-network)
+        """
+        v2x_devices = [
+            d for d in self._devices.values()
+            if d.connected and d.protocol == Protocol.V2X
+        ]
+        delivered = []
+        for device in v2x_devices:
+            msg = await self.publish(
+                device.device_id, f"v2x/{signal_type.lower()}",
+                {"signal_type": signal_type, "source": source_id, **data},
+            )
+            delivered.append(device.device_id)
+
+        log.info("nexus_sync.v2x_signal", type=signal_type, targets=len(delivered))
+        return {
+            "signal_type": signal_type,
+            "targets_reached": len(delivered),
+            "device_ids": delivered,
+            "timestamp": time.time(),
+        }
+
+    async def v2x_traffic_light_request(
+        self,
+        intersection_id: str,
+        priority: str = "normal",
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """
+        Request traffic light priority at a smart intersection (V2I).
+
+        priority: normal | emergency | preemption
+        Used by Life Corridors to clear routes for emergency vehicles.
+        """
+        rsu_devices = [
+            d for d in self._devices.values()
+            if d.connected and d.device_type == DeviceType.V2X_RSU
+        ]
+        result = None
+        for rsu in rsu_devices:
+            result = await self.command(rsu.device_id, "traffic_light_priority", {
+                "intersection_id": intersection_id,
+                "priority": priority,
+                "reason": reason,
+            })
+            if result.get("status") == "OK":
+                break
+
+        return result or {
+            "status": "NO_RSU",
+            "intersection_id": intersection_id,
+            "message": "No connected V2X RSU found",
+        }
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
@@ -244,13 +372,26 @@ class NexusSync:
         type_counts = {}
         for d in self._devices.values():
             type_counts[d.device_type.value] = type_counts.get(d.device_type.value, 0) + 1
+        mesh_nodes = sum(
+            1 for d in self._devices.values()
+            if d.protocol in (Protocol.LORAWAN, Protocol.BLE_MESH)
+        )
+        v2x_nodes = sum(
+            1 for d in self._devices.values()
+            if d.protocol == Protocol.V2X
+        )
         return {
             "status": "ONLINE",
             "navigation_role": "vehicle_iot_bus",
-            "capabilities": ["drone_dispatch", "vehicle_integration", "sensor_ingest", "v2x_messaging"],
+            "capabilities": [
+                "drone_dispatch", "vehicle_integration", "sensor_ingest",
+                "v2x_messaging", "lorawan_mesh", "ble_mesh", "traffic_light_priority",
+            ],
             "registered_devices": len(self._devices),
             "connected_devices": connected,
             "device_types": type_counts,
+            "mesh_nodes": mesh_nodes,
+            "v2x_nodes": v2x_nodes,
             "total_messages": self._message_count,
             "subscriptions": {t: len(h) for t, h in self._subscriptions.items()},
             "max_connections": self.MAX_CONNECTIONS,

@@ -259,7 +259,7 @@ def test_nav_viewer_served(client):
     r = client.get("/nav")
     assert r.status_code == 200
     assert "<!doctype html>" in r.text.lower()
-    assert "BRAINIAC NAV" in r.text
+    assert "GANE" in r.text
 
 
 # ── Security Middleware ───────────────────────────────────────────────────────

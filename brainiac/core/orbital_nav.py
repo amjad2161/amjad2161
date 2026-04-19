@@ -771,6 +771,48 @@ class OrbitalNav:
         })
         return instructions
 
+    # ── Life Corridors (Emergency Priority Routing) ────────────────────────
+
+    async def life_corridor(
+        self,
+        origin: Coordinate,
+        destination: Coordinate,
+        priority: str = "emergency",
+        mode: TransportMode = TransportMode.DRIVE,
+    ) -> dict[str, Any]:
+        """
+        Compute a Life Corridor — a priority-cleared emergency route.
+
+        Life Corridors integrate with V2X infrastructure to:
+        - Pre-empt traffic signals along the route
+        - Clear civilian traffic via connected-vehicle warnings
+        - Bypass congestion zones with alternative emergency paths
+        - Provide zero-traffic-penalty ETA for critical patients
+
+        priority: emergency | preemption | normal
+        """
+        route = await self.route(origin, destination, mode=mode, alternatives=3)
+        base_eta = route.total_duration_s
+
+        # Emergency corridors get no traffic penalty
+        traffic_factor = 0.85 if priority == "emergency" else 0.95 if priority == "preemption" else 1.0
+        adjusted_eta = self.adjust_eta_for_conditions(base_eta, traffic_factor=traffic_factor)
+
+        intersection_count = max(1, len(route.waypoints) - 1)
+        estimated_signal_saves = intersection_count * 15  # ~15s saved per pre-empted light
+
+        return {
+            "route": route.summary(),
+            "corridor_type": priority,
+            "base_eta_s": round(base_eta, 1),
+            "corridor_eta_s": round(adjusted_eta, 1),
+            "time_saved_s": round(base_eta - adjusted_eta + estimated_signal_saves, 1),
+            "intersections_to_preempt": intersection_count,
+            "estimated_signal_saves_s": estimated_signal_saves,
+            "v2x_broadcast_required": priority in ("emergency", "preemption"),
+            "geometry": [{"lat": c.lat, "lon": c.lon} for c in route.geometry[:50]],
+        }
+
     # ── ETA-only (fast path, no full route computation) ──────────────────────
 
     def estimate_eta(

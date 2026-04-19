@@ -3,84 +3,388 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
-<title>BRAINIAC NAV — Live Map</title>
+<title>GANE — Global Autonomous Navigation Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
   integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
   crossorigin="" />
 <style>
+  /* ─── MANUS-inspired design system ─────────────────────────────────────── */
   :root {
-    --bg: #0a0e1a;
-    --panel: #11172a;
-    --fg: #e8eefc;
-    --accent: #00f5ff;
-    --accent-2: #ff6ec7;
-    --border: #22304a;
+    --bg-0: #0c0c0e;
+    --bg-1: #131316;
+    --bg-2: #1a1a1f;
+    --bg-3: #22222a;
+    --border: rgba(255, 255, 255, 0.06);
+    --border-hover: rgba(255, 255, 255, 0.12);
+    --text-0: #f4f4f5;
+    --text-1: #a1a1aa;
+    --text-2: #71717a;
+    --accent: #ffffff;
+    --accent-soft: rgba(255, 255, 255, 0.9);
+    --brand: #d4d4d8;
+    --highlight: #fafafa;
+    --success: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --emerald: #10b981;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.5);
+    --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);
   }
-  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--fg); }
-  #layout { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
-  #side { background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
-  #map  { height: 100%; }
-  h1 { font-size: 16px; letter-spacing: 0.12em; color: var(--accent); margin: 0 0 12px 0; text-transform: uppercase; }
-  h2 { font-size: 12px; letter-spacing: 0.1em; color: var(--accent-2); margin: 18px 0 6px 0; text-transform: uppercase; }
-  label { display: block; font-size: 11px; color: #8fa0c7; margin: 8px 0 2px; text-transform: uppercase; letter-spacing: 0.1em; }
-  input, select, button { width: 100%; padding: 8px 10px; margin: 2px 0; background: #070c18; color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; box-sizing: border-box; }
-  button { background: var(--accent); color: #0a0e1a; font-weight: 600; cursor: pointer; border: none; margin-top: 10px; }
-  button:hover { background: #00d6dd; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .stat { font-size: 12px; color: #8fa0c7; margin-top: 4px; }
-  .stat b { color: var(--fg); font-weight: 600; }
-  #instructions { margin-top: 8px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
-  #instructions .ins { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.4; }
-  #instructions .ins:last-child { border-bottom: none; }
-  #instructions .dist { color: var(--accent); font-weight: 600; }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: var(--font-sans);
+    background: var(--bg-0);
+    color: var(--text-0);
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Subtle grain overlay */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    background-image: radial-gradient(rgba(255,255,255,0.015) 1px, transparent 1px);
+    background-size: 3px 3px;
+    pointer-events: none; z-index: 1;
+  }
+
+  #layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    height: 100vh;
+    position: relative;
+    z-index: 2;
+  }
+
+  /* ─── Sidebar ─────────────────────────────────────────────────────────── */
+  #side {
+    background: var(--bg-1);
+    border-right: 1px solid var(--border);
+    padding: 24px 20px;
+    overflow-y: auto;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+  #side::-webkit-scrollbar { width: 6px; }
+  #side::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 3px; }
+
+  /* Brand */
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding-bottom: 16px; border-bottom: 1px solid var(--border);
+  }
+  .brand-mark {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, #ffffff 0%, #a1a1aa 100%);
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 14px; color: #000;
+    box-shadow: var(--shadow-sm);
+  }
+  .brand-text {
+    display: flex; flex-direction: column; line-height: 1.1;
+  }
+  .brand-name {
+    font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+    color: var(--text-0);
+  }
+  .brand-sub {
+    font-size: 10px; font-weight: 500; letter-spacing: 0.08em;
+    color: var(--text-2); text-transform: uppercase; margin-top: 2px;
+  }
+
+  /* Card */
+  .card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 16px;
+    transition: border-color 0.2s var(--ease);
+  }
+  .card:hover { border-color: var(--border-hover); }
+
+  .card-title {
+    font-size: 11px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-1); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .card-title::before {
+    content: ""; width: 3px; height: 10px;
+    background: var(--text-1); border-radius: 1px;
+  }
+
+  label {
+    display: block; font-size: 11px; font-weight: 500;
+    color: var(--text-2); margin-bottom: 6px;
+    letter-spacing: 0.02em;
+  }
+
+  input, select {
+    width: 100%; padding: 9px 11px;
+    background: var(--bg-1);
+    color: var(--text-0);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px; font-family: var(--font-mono);
+    font-weight: 400;
+    transition: all 0.15s var(--ease);
+  }
+  input:hover, select:hover { border-color: var(--border-hover); }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--accent-soft);
+    background: var(--bg-0);
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.04);
+  }
+  select { cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 30px;
+  }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* Button */
+  .btn {
+    width: 100%; padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 13px; font-weight: 500;
+    font-family: var(--font-sans);
+    border: 1px solid transparent; cursor: pointer;
+    transition: all 0.15s var(--ease);
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+  }
+  .btn-primary {
+    background: var(--accent); color: #000;
+    box-shadow: var(--shadow-sm);
+  }
+  .btn-primary:hover {
+    background: var(--highlight);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+  }
+  .btn-secondary {
+    background: var(--bg-3); color: var(--text-0);
+    border-color: var(--border);
+  }
+  .btn-secondary:hover {
+    background: var(--bg-2);
+    border-color: var(--border-hover);
+  }
+
+  .btn-group { display: flex; flex-direction: column; gap: 8px; }
+
+  /* Stats */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .stat {
+    padding: 12px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .stat-label {
+    font-size: 10px; font-weight: 500;
+    color: var(--text-2); text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .stat-value {
+    font-size: 18px; font-weight: 600;
+    color: var(--text-0); margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .stat-value .unit {
+    font-size: 11px; color: var(--text-2);
+    font-weight: 400; margin-left: 3px;
+  }
+
+  /* Live badge */
+  .live-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text-1);
+    padding: 8px 12px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--text-2);
+  }
+  .dot.on {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+    animation: pulse 1.8s var(--ease) infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* Instructions */
+  #instructions {
+    max-height: 320px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  #instructions::-webkit-scrollbar { width: 4px; }
+  #instructions::-webkit-scrollbar-thumb { background: var(--bg-3); border-radius: 2px; }
+
+  .ins {
+    padding: 12px 14px;
+    background: var(--bg-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: 13px; line-height: 1.5;
+    display: flex; flex-direction: column; gap: 4px;
+    transition: border-color 0.15s var(--ease);
+  }
+  .ins:hover { border-color: var(--border-hover); }
+  .ins .dist {
+    font-size: 11px; font-weight: 600;
+    color: var(--emerald); font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+  }
+  .ins .text { color: var(--text-0); }
+
   body.rtl #instructions { direction: rtl; text-align: right; }
-  #ws-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #444; margin-right: 6px; vertical-align: middle; }
-  #ws-status.on { background: #0f9; box-shadow: 0 0 6px #0f9; }
+  body.rtl .ins { direction: rtl; text-align: right; }
+  body.rtl input, body.rtl select { direction: rtl; }
+
+  /* Map */
+  #map {
+    height: 100%;
+    background: var(--bg-0);
+    filter: saturate(0.8);
+  }
+  .leaflet-container {
+    background: var(--bg-0) !important;
+    font-family: var(--font-sans);
+  }
+  .leaflet-tile { filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9); }
+  .leaflet-control-attribution {
+    background: rgba(0, 0, 0, 0.6) !important;
+    color: var(--text-2) !important;
+    font-size: 10px !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-sm) !important;
+  }
+  .leaflet-control-attribution a { color: var(--text-1) !important; }
+  .leaflet-control-zoom a {
+    background: var(--bg-2) !important;
+    color: var(--text-0) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-sm) !important;
+  }
+  .leaflet-control-zoom a:hover {
+    background: var(--bg-3) !important;
+    border-color: var(--border-hover) !important;
+  }
+
+  /* Footer */
+  .footer {
+    margin-top: auto;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 10px; font-weight: 500;
+    color: var(--text-2);
+    display: flex; justify-content: space-between;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+
+  /* Responsive */
+  @media (max-width: 840px) {
+    #layout { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    #side { max-height: 50vh; border-right: none; border-top: 1px solid var(--border); order: 2; }
+    #map { order: 1; }
+  }
 </style>
 </head>
 <body>
 <div id="layout">
   <aside id="side">
-    <h1>▲ BRAINIAC NAV</h1>
-
-    <h2>Origin</h2>
-    <div class="row">
-      <input id="olat" type="number" step="0.000001" value="32.0853" />
-      <input id="olon" type="number" step="0.000001" value="34.7818" />
+    <div class="brand">
+      <div class="brand-mark">G</div>
+      <div class="brand-text">
+        <div class="brand-name">GANE</div>
+        <div class="brand-sub">Global Autonomous Navigation</div>
+      </div>
     </div>
 
-    <h2>Destination</h2>
-    <div class="row">
-      <input id="dlat" type="number" step="0.000001" value="31.7683" />
-      <input id="dlon" type="number" step="0.000001" value="35.2137" />
+    <div class="card">
+      <div class="card-title">Route</div>
+      <label>Origin</label>
+      <div class="row">
+        <input id="olat" type="number" step="0.000001" value="32.0853" placeholder="lat" />
+        <input id="olon" type="number" step="0.000001" value="34.7818" placeholder="lon" />
+      </div>
+      <div style="height:10px"></div>
+      <label>Destination</label>
+      <div class="row">
+        <input id="dlat" type="number" step="0.000001" value="31.7683" placeholder="lat" />
+        <input id="dlon" type="number" step="0.000001" value="35.2137" placeholder="lon" />
+      </div>
+      <div style="height:14px"></div>
+      <label>Transport mode</label>
+      <select id="mode">
+        <option value="driving">Driving</option>
+        <option value="walking">Walking</option>
+        <option value="cycling">Cycling</option>
+        <option value="drone">Drone</option>
+      </select>
+      <div style="height:10px"></div>
+      <label>Language</label>
+      <select id="lang">
+        <option value="en">English</option>
+        <option value="he">עברית · Hebrew</option>
+        <option value="ar">العربية · Arabic</option>
+      </select>
+      <div style="height:14px"></div>
+      <div class="btn-group">
+        <button class="btn btn-primary" id="btn-route">Compute Route</button>
+        <button class="btn btn-secondary" id="btn-ws">Start Live Tracking</button>
+      </div>
     </div>
 
-    <label for="mode">Mode</label>
-    <select id="mode">
-      <option value="driving">Driving</option>
-      <option value="walking">Walking</option>
-      <option value="cycling">Cycling</option>
-      <option value="drone">Drone</option>
-    </select>
+    <div class="card">
+      <div class="card-title">Summary</div>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Distance</div>
+          <div class="stat-value"><span id="s-dist">—</span></div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">ETA</div>
+          <div class="stat-value"><span id="s-eta">—</span></div>
+        </div>
+      </div>
+      <div style="height:10px"></div>
+      <div class="live-row">
+        <span class="dot" id="ws-status"></span>
+        <span>Live tracking · <span id="s-live">off</span></span>
+      </div>
+    </div>
 
-    <label for="lang">Language</label>
-    <select id="lang">
-      <option value="en">English</option>
-      <option value="he">עברית (RTL)</option>
-      <option value="ar">العربية (RTL)</option>
-    </select>
+    <div class="card">
+      <div class="card-title">Turn-by-turn</div>
+      <div id="instructions"><div class="ins"><span class="text" style="color:var(--text-2)">Compute a route to view directions</span></div></div>
+    </div>
 
-    <button id="btn-route">Compute Route</button>
-    <button id="btn-ws">Start Live Tracking</button>
-
-    <h2>Summary</h2>
-    <div class="stat">Distance: <b id="s-dist">—</b></div>
-    <div class="stat">ETA: <b id="s-eta">—</b></div>
-    <div class="stat">Mode: <b id="s-mode">—</b></div>
-    <div class="stat"><span id="ws-status"></span>Live: <b id="s-live">off</b></div>
-
-    <h2>Turn-by-turn</h2>
-    <div id="instructions"></div>
+    <div class="footer">
+      <span>v2.1.0 · GANE</span>
+      <span>12 Modules · 6 GNSS</span>
+    </div>
   </aside>
 
   <div id="map"></div>
@@ -93,9 +397,9 @@
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const map = L.map("map").setView([32.0853, 34.7818], 8);
+  const map = L.map("map", { zoomControl: true, attributionControl: true }).setView([32.0853, 34.7818], 8);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19, attribution: "© OpenStreetMap contributors",
+    maxZoom: 19, attribution: "© OpenStreetMap",
   }).addTo(map);
 
   let routeLayer = null;
@@ -116,38 +420,52 @@
     const lang = $("lang").value;
     setRTL(lang);
 
-    const r = await fetch(`/api/v1/nav/turn-by-turn?lang=${lang}`, {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) { alert("Route failed: " + r.status); return; }
-    const data = await r.json();
+    const btn = $("btn-route");
+    btn.textContent = "Computing…";
+    btn.disabled = true;
 
-    $("s-dist").textContent = (data.total_distance_m / 1000).toFixed(2) + " km";
-    $("s-eta").textContent  = Math.round(data.total_duration_s / 60) + " min";
-    $("s-mode").textContent = payload.mode;
+    try {
+      const r = await fetch(`/api/v1/nav/turn-by-turn?lang=${lang}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) { alert("Route failed: " + r.status); return; }
+      const data = await r.json();
 
-    if (routeLayer) map.removeLayer(routeLayer);
-    const coords = data.instructions.map(i => [i.lat, i.lon]);
-    if (coords.length) {
-      routeLayer = L.polyline(coords, {color: "#00f5ff", weight: 4, opacity: 0.85}).addTo(map);
-      map.fitBounds(routeLayer.getBounds(), {padding: [30, 30]});
-    }
+      $("s-dist").innerHTML = (data.total_distance_m / 1000).toFixed(2) + '<span class="unit">km</span>';
+      $("s-eta").innerHTML  = Math.round(data.total_duration_s / 60) + '<span class="unit">min</span>';
 
-    const list = $("instructions");
-    list.innerHTML = "";
-    for (const ins of data.instructions) {
-      const el = document.createElement("div");
-      el.className = "ins";
-      const d = ins.distance_m >= 1000 ? (ins.distance_m/1000).toFixed(1)+" km" : Math.round(ins.distance_m)+" m";
-      const span = document.createElement("span");
-      span.className = "dist";
-      span.textContent = d;
-      el.appendChild(span);
-      el.appendChild(document.createTextNode(" \u2014 "));
-      el.appendChild(document.createTextNode(ins.instruction));
-      list.appendChild(el);
+      if (routeLayer) map.removeLayer(routeLayer);
+      const coords = data.instructions.map(i => [i.lat, i.lon]);
+      if (coords.length) {
+        routeLayer = L.polyline(coords, {
+          color: "#ffffff", weight: 4, opacity: 0.9,
+          lineCap: "round", lineJoin: "round",
+        }).addTo(map);
+        map.fitBounds(routeLayer.getBounds(), {padding: [40, 40]});
+      }
+
+      const list = $("instructions");
+      list.innerHTML = "";
+      for (const ins of data.instructions) {
+        const el = document.createElement("div");
+        el.className = "ins";
+        const dist = document.createElement("span");
+        dist.className = "dist";
+        dist.textContent = ins.distance_m >= 1000
+          ? (ins.distance_m / 1000).toFixed(1) + " KM"
+          : Math.round(ins.distance_m) + " M";
+        const text = document.createElement("span");
+        text.className = "text";
+        text.textContent = ins.instruction;
+        el.appendChild(dist);
+        el.appendChild(text);
+        list.appendChild(el);
+      }
+    } finally {
+      btn.textContent = "Compute Route";
+      btn.disabled = false;
     }
   }
 
@@ -167,7 +485,8 @@
       const p = JSON.parse(ev.data);
       if (!liveMarker) {
         liveMarker = L.circleMarker([p.lat, p.lon], {
-          radius: 8, color: "#ff6ec7", fillColor: "#ff6ec7", fillOpacity: 0.9,
+          radius: 7, color: "#4ade80", fillColor: "#4ade80",
+          fillOpacity: 0.9, weight: 2,
         }).addTo(map);
       } else {
         liveMarker.setLatLng([p.lat, p.lon]);

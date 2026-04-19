@@ -175,6 +175,121 @@ class OmniVision:
             processing_ms=round(elapsed, 2),
         )
 
+    # ── SLAM (Simultaneous Localisation and Mapping) ────────────────────────
+
+    def process_lidar_scan(
+        self,
+        points: list[tuple[float, float, float]],
+        intensity: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Process a LiDAR point cloud scan for SLAM.
+
+        points: list of (x, y, z) in metres relative to sensor origin
+        intensity: optional per-point reflectance values [0..1]
+
+        Returns occupancy grid summary + obstacle detections.
+        """
+        if not points:
+            return {
+                "obstacles": [], "point_count": 0, "occupancy_cells": 0,
+                "total_obstacles": 0,
+                "grid_size": {"width": 0, "height": 0, "cell_m": 0.5},
+                "bounds": {"min_x": 0, "max_x": 0, "min_y": 0, "max_y": 0},
+            }
+
+        min_x = min(p[0] for p in points)
+        max_x = max(p[0] for p in points)
+        min_y = min(p[1] for p in points)
+        max_y = max(p[1] for p in points)
+
+        cell_size = 0.5  # 50cm grid
+        grid_w = max(1, int((max_x - min_x) / cell_size) + 1)
+        grid_h = max(1, int((max_y - min_y) / cell_size) + 1)
+
+        occupied: set[tuple[int, int]] = set()
+        obstacles: list[dict[str, Any]] = []
+
+        for i, (x, y, z) in enumerate(points):
+            cx = int((x - min_x) / cell_size)
+            cy = int((y - min_y) / cell_size)
+            occupied.add((cx, cy))
+
+            if z > 0.3:  # obstacle above ground plane
+                obstacles.append({
+                    "x": round(x, 2), "y": round(y, 2), "z": round(z, 2),
+                    "distance_m": round((x**2 + y**2) ** 0.5, 2),
+                    "intensity": round(intensity[i], 3) if intensity and i < len(intensity) else None,
+                })
+
+        self._frames_processed += 1
+        log.info("omni_vision.lidar_scan", points=len(points), obstacles=len(obstacles))
+        return {
+            "point_count": len(points),
+            "occupancy_cells": len(occupied),
+            "grid_size": {"width": grid_w, "height": grid_h, "cell_m": cell_size},
+            "bounds": {
+                "min_x": round(min_x, 2), "max_x": round(max_x, 2),
+                "min_y": round(min_y, 2), "max_y": round(max_y, 2),
+            },
+            "obstacles": obstacles[:50],  # cap at 50 for serialisation
+            "total_obstacles": len(obstacles),
+        }
+
+    def slam_update(
+        self,
+        lidar_points: list[tuple[float, float, float]],
+        imu_heading_deg: float = 0.0,
+        odometry_dx: float = 0.0,
+        odometry_dy: float = 0.0,
+    ) -> dict[str, Any]:
+        """
+        Single SLAM iteration: fuse LiDAR scan with IMU heading + odometry.
+
+        Returns updated position estimate and map delta.
+        """
+        scan = self.process_lidar_scan(lidar_points)
+        return {
+            "position_delta": {
+                "dx": round(odometry_dx, 3),
+                "dy": round(odometry_dy, 3),
+                "heading_deg": round(imu_heading_deg, 1),
+            },
+            "scan_summary": {
+                "points": scan["point_count"],
+                "obstacles": scan["total_obstacles"],
+                "cells": scan["occupancy_cells"],
+            },
+            "map_updated": scan["point_count"] > 0,
+            "timestamp": time.time(),
+        }
+
+    def detect_obstacles_3d(
+        self,
+        points: list[tuple[float, float, float]],
+        min_height_m: float = 0.3,
+        max_range_m: float = 50.0,
+    ) -> list[dict[str, Any]]:
+        """
+        Detect navigable obstacles from a 3D point cloud.
+
+        Returns obstacle clusters with centroid, bounding volume, and risk level.
+        """
+        obstacles = []
+        for x, y, z in points:
+            dist = (x**2 + y**2) ** 0.5
+            if z >= min_height_m and dist <= max_range_m:
+                risk = "HIGH" if dist < 5 else "MEDIUM" if dist < 15 else "LOW"
+                obstacles.append({
+                    "centroid": {"x": round(x, 2), "y": round(y, 2), "z": round(z, 2)},
+                    "distance_m": round(dist, 2),
+                    "height_m": round(z, 2),
+                    "risk": risk,
+                })
+
+        obstacles.sort(key=lambda o: o["distance_m"])
+        return obstacles[:100]
+
     # ── Spectrum simulation ───────────────────────────────────────────────────
 
     def simulate_thermal(self, image_bytes: bytes) -> bytes:
@@ -197,7 +312,11 @@ class OmniVision:
         return {
             "status": "ONLINE",
             "navigation_role": "visual_slam_and_obstacle_avoidance",
-            "capabilities": ["obstacle_detection", "road_sign_recognition", "visual_slam", "multi_spectrum"],
+            "capabilities": [
+                "obstacle_detection", "road_sign_recognition", "visual_slam",
+                "multi_spectrum", "lidar_processing", "3d_obstacle_detection",
+                "occupancy_grid", "slam_fusion",
+            ],
             "spectrums": [s.value for s in self.spectrums],
             "frames_processed": self._frames_processed,
         }

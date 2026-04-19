@@ -271,6 +271,135 @@ class CyberShield:
         )
         return event
 
+    # ── Hardware Attack Detection ────────────────────────────────────────────
+
+    def detect_hardware_attack(
+        self,
+        sensor_readings: dict[str, float],
+        rf_spectrum: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Detect hardware-level attacks: EMP interference, NFC cloning,
+        RF signal injection (e.g. Flipper Zero).
+
+        sensor_readings: keys like 'emf_gauss', 'voltage_v', 'temp_c', 'clock_drift_ppm'
+        rf_spectrum: signal strength samples across monitored bands (dBm)
+        """
+        indicators: list[str] = []
+        score = 0.0
+
+        emf = sensor_readings.get("emf_gauss", 0.0)
+        if emf > 100.0:
+            indicators.append("EMP_INTERFERENCE_DETECTED")
+            score += 0.8
+        elif emf > 50.0:
+            indicators.append("HIGH_EMF_WARNING")
+            score += 0.3
+
+        voltage = sensor_readings.get("voltage_v", 3.3)
+        if voltage < 2.5 or voltage > 4.5:
+            indicators.append("VOLTAGE_ANOMALY")
+            score += 0.3
+
+        clock_drift = sensor_readings.get("clock_drift_ppm", 0.0)
+        if abs(clock_drift) > 50:
+            indicators.append("CLOCK_DRIFT_ANOMALY")
+            score += 0.4
+
+        if rf_spectrum and len(rf_spectrum) >= 5:
+            max_dbm = max(rf_spectrum)
+            if max_dbm > -10:
+                indicators.append("RF_INJECTION_DETECTED")
+                score += 0.7
+            avg_dbm = sum(rf_spectrum) / len(rf_spectrum)
+            if avg_dbm > -30:
+                indicators.append("ELEVATED_RF_ENVIRONMENT")
+                score += 0.2
+
+        likelihood = min(1.0, score)
+        action = "BLOCK" if likelihood >= 0.7 else "ALERT" if likelihood >= 0.3 else "OK"
+
+        if indicators:
+            self._record_threat(
+                ThreatType.ANOMALOUS_TRAFFIC,
+                ThreatLevel.CRITICAL if likelihood >= 0.7 else ThreatLevel.MEDIUM,
+                "0.0.0.0", "hardware_monitor",
+                f"Hardware attack indicators: {', '.join(indicators)}",
+                {"indicators": indicators, "sensor_readings": sensor_readings},
+            )
+
+        return {
+            "attack_likelihood": round(likelihood, 2),
+            "indicators": indicators,
+            "action": action,
+            "sensor_readings": sensor_readings,
+        }
+
+    # ── Federated Learning Privacy ───────────────────────────────────────────
+
+    def enforce_data_locality(
+        self,
+        data: dict[str, Any],
+        allowed_fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Strip personally identifiable information before any data leaves the device.
+
+        Enforces federated learning principle: only aggregated model gradients
+        are shared, never raw user data.
+        """
+        pii_fields = {
+            "name", "email", "phone", "ssn", "passport", "address",
+            "ip_address", "mac_address", "device_fingerprint",
+            "precise_location", "biometric_data", "face_encoding",
+        }
+        sanitised = {}
+        retained_fields = set(allowed_fields) if allowed_fields else set()
+
+        for key, value in data.items():
+            key_lower = key.lower().replace("-", "_")
+            if key_lower in pii_fields and key not in retained_fields:
+                sanitised[key] = "[REDACTED]"
+            elif isinstance(value, dict):
+                sanitised[key] = self.enforce_data_locality(value, allowed_fields)
+            else:
+                sanitised[key] = value
+
+        return sanitised
+
+    def privacy_audit(self, data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Audit a data payload for PII exposure risk.
+
+        Returns risk assessment and list of fields containing potential PII.
+        """
+        pii_patterns = {
+            "email": r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
+            "phone": r"\+?[\d\-\(\)\s]{7,15}",
+            "ip_address": r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}",
+            "coordinates": r"-?\d{1,3}\.\d{4,}",
+        }
+        exposed_fields: list[dict[str, str]] = []
+
+        def _scan(obj: Any, path: str = "") -> None:
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    _scan(v, f"{path}.{k}" if path else k)
+            elif isinstance(obj, str):
+                for pii_type, pattern in pii_patterns.items():
+                    if re.search(pattern, obj):
+                        exposed_fields.append({"field": path, "pii_type": pii_type})
+                        break
+
+        _scan(data)
+        risk = min(1.0, len(exposed_fields) * 0.2)
+        return {
+            "pii_risk_score": round(risk, 2),
+            "exposed_fields": exposed_fields,
+            "recommendation": "BLOCK_TRANSMISSION" if risk > 0.5 else "REVIEW" if risk > 0 else "CLEAR",
+            "federated_compliant": len(exposed_fields) == 0,
+        }
+
     # ── GNSS / Navigation Security ───────────────────────────────────────────
 
     def detect_gps_spoofing(
@@ -352,7 +481,10 @@ class CyberShield:
         return {
             "status": "ONLINE",
             "navigation_role": "security_layer",
-            "capabilities": ["threat_scan", "signing", "gps_spoofing_detection", "rate_limiting"],
+            "capabilities": [
+                "threat_scan", "signing", "gps_spoofing_detection", "rate_limiting",
+                "hardware_attack_detection", "federated_privacy", "pii_audit",
+            ],
             "total_events": len(self._events),
             "events_by_level": by_level,
             "blocked_ips": len(self._blocked_ips),

@@ -396,6 +396,111 @@ class BrainiacClient:
         r.raise_for_status()
         return r.json()
 
+    # ── Mesh Networking & V2X ────────────────────────────────────────────────
+
+    async def mesh_broadcast(
+        self, payload: dict, protocol: str = "LoRaWAN", ttl: int = 3,
+    ) -> dict:
+        r = await self._client.post("/api/v1/nexus/mesh/broadcast", json={
+            "payload": payload, "protocol": protocol, "ttl": ttl,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def mesh_topology(self) -> dict:
+        r = await self._client.get("/api/v1/nexus/mesh/topology")
+        r.raise_for_status()
+        return r.json()
+
+    async def v2x_signal(self, signal_type: str, data: dict, source_id: str = "gane") -> dict:
+        r = await self._client.post("/api/v1/nexus/v2x/signal", json={
+            "signal_type": signal_type, "data": data, "source_id": source_id,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def v2x_traffic_light(
+        self, intersection_id: str, priority: str = "normal", reason: str = "",
+    ) -> dict:
+        r = await self._client.post("/api/v1/nexus/v2x/traffic-light", json={
+            "intersection_id": intersection_id, "priority": priority, "reason": reason,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    # ── Life Corridors ───────────────────────────────────────────────────────
+
+    async def life_corridor(
+        self,
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        priority: str = "emergency", mode: str = "driving",
+    ) -> dict:
+        r = await self._client.post("/api/v1/nav/life-corridor", params={
+            "origin_lat": origin_lat, "origin_lon": origin_lon,
+            "dest_lat": dest_lat, "dest_lon": dest_lon,
+            "priority": priority, "mode": mode,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    # ── SLAM / LiDAR ─────────────────────────────────────────────────────────
+
+    async def lidar_scan(self, points: list, intensity: list | None = None) -> dict:
+        body = {"points": points}
+        if intensity is not None:
+            body["intensity"] = intensity
+        r = await self._client.post("/api/v1/vision/lidar-scan", json=body)
+        r.raise_for_status()
+        return r.json()
+
+    async def slam_update(
+        self, points: list, imu_heading_deg: float = 0.0,
+        odometry_dx: float = 0.0, odometry_dy: float = 0.0,
+    ) -> dict:
+        r = await self._client.post("/api/v1/vision/slam-update", json={
+            "points": points, "imu_heading_deg": imu_heading_deg,
+            "odometry_dx": odometry_dx, "odometry_dy": odometry_dy,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def obstacles_3d(
+        self, points: list, min_height_m: float = 0.3, max_range_m: float = 50.0,
+    ) -> dict:
+        r = await self._client.post("/api/v1/vision/obstacles-3d", json={
+            "points": points, "min_height_m": min_height_m, "max_range_m": max_range_m,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    # ── Hardware Attack / Federated Privacy ─────────────────────────────────
+
+    async def detect_hardware_attack(
+        self, sensor_readings: dict, rf_spectrum: list | None = None,
+    ) -> dict:
+        body = {"sensor_readings": sensor_readings}
+        if rf_spectrum is not None:
+            body["rf_spectrum"] = rf_spectrum
+        r = await self._client.post("/api/v1/security/detect-hardware-attack", json=body)
+        r.raise_for_status()
+        return r.json()
+
+    async def privacy_audit(self, data: dict) -> dict:
+        r = await self._client.post("/api/v1/security/privacy-audit", json={"data": data})
+        r.raise_for_status()
+        return r.json()
+
+    async def enforce_data_locality(
+        self, data: dict, allowed_fields: list | None = None,
+    ) -> dict:
+        body = {"data": data}
+        if allowed_fields is not None:
+            body["allowed_fields"] = allowed_fields
+        r = await self._client.post("/api/v1/security/enforce-data-locality", json=body)
+        r.raise_for_status()
+        return r.json()
+
     # ── Agent ────────────────────────────────────────────────────────────────
 
     async def agent_run(self, prompt: str, force_agent: str | None = None) -> dict:

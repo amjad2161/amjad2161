@@ -853,6 +853,127 @@ async def image_info(request: Request):
     return vision.image_info(image_bytes)
 
 
+@app.post("/api/v1/vision/lidar-scan", tags=["OMNI-VISION"])
+async def lidar_scan(request: Request):
+    """Process a LiDAR point cloud for SLAM / obstacle detection."""
+    body = await request.json()
+    points = [tuple(p) for p in body.get("points", [])]
+    intensity = body.get("intensity")
+    return vision.process_lidar_scan(points, intensity)
+
+
+@app.post("/api/v1/vision/slam-update", tags=["OMNI-VISION"])
+async def slam_update(request: Request):
+    """Run a single SLAM iteration: LiDAR + IMU heading + odometry."""
+    body = await request.json()
+    points = [tuple(p) for p in body.get("points", [])]
+    return vision.slam_update(
+        points,
+        imu_heading_deg=body.get("imu_heading_deg", 0.0),
+        odometry_dx=body.get("odometry_dx", 0.0),
+        odometry_dy=body.get("odometry_dy", 0.0),
+    )
+
+
+@app.post("/api/v1/vision/obstacles-3d", tags=["OMNI-VISION"])
+async def obstacles_3d(request: Request):
+    """Detect 3D obstacles from a point cloud."""
+    body = await request.json()
+    points = [tuple(p) for p in body.get("points", [])]
+    return {
+        "obstacles": vision.detect_obstacles_3d(
+            points,
+            min_height_m=body.get("min_height_m", 0.3),
+            max_range_m=body.get("max_range_m", 50.0),
+        )
+    }
+
+
+# ── NEXUS MESH & V2X ────────────────────────────────────────────────────────
+
+@app.post("/api/v1/nexus/mesh/broadcast", tags=["NEXUS-SYNC"])
+async def mesh_broadcast(request: Request):
+    """Broadcast data to all connected LoRaWAN/BLE mesh nodes."""
+    body = await request.json()
+    payload = body.get("payload", {})
+    protocol = body.get("protocol", "LoRaWAN")
+    ttl = body.get("ttl", 3)
+    from brainiac.core.nexus_sync import Protocol as Proto
+    return await nexus.broadcast_mesh(payload, protocol=Proto(protocol), ttl=ttl)
+
+
+@app.get("/api/v1/nexus/mesh/topology", tags=["NEXUS-SYNC"])
+async def mesh_topology():
+    """Return current mesh network topology."""
+    return nexus.mesh_topology()
+
+
+@app.post("/api/v1/nexus/v2x/signal", tags=["NEXUS-SYNC"])
+async def v2x_signal(request: Request):
+    """Send a V2X signal (V2I, V2V, V2P, V2N)."""
+    body = await request.json()
+    return await nexus.v2x_signal(
+        signal_type=body.get("signal_type", "V2I"),
+        data=body.get("data", {}),
+        source_id=body.get("source_id", "gane-node"),
+    )
+
+
+@app.post("/api/v1/nexus/v2x/traffic-light", tags=["NEXUS-SYNC"])
+async def v2x_traffic_light(request: Request):
+    """Request traffic light priority at a smart intersection."""
+    body = await request.json()
+    return await nexus.v2x_traffic_light_request(
+        intersection_id=body.get("intersection_id", ""),
+        priority=body.get("priority", "normal"),
+        reason=body.get("reason", ""),
+    )
+
+
+# ── LIFE CORRIDORS ──────────────────────────────────────────────────────────
+
+@app.post("/api/v1/nav/life-corridor", tags=["ORBITAL-NAV"])
+async def life_corridor(
+    origin_lat: float, origin_lon: float,
+    dest_lat: float, dest_lon: float,
+    priority: str = "emergency",
+    mode: str = "driving",
+):
+    """Compute a Life Corridor — emergency priority-cleared route."""
+    origin = Coordinate(lat=origin_lat, lon=origin_lon)
+    dest = Coordinate(lat=dest_lat, lon=dest_lon)
+    return await nav.life_corridor(origin, dest, priority=priority, mode=TransportMode(mode))
+
+
+# ── SECURITY EXTENSIONS ─────────────────────────────────────────────────────
+
+@app.post("/api/v1/security/detect-hardware-attack", tags=["CYBER-SHIELD"])
+async def detect_hardware_attack(request: Request):
+    """Detect hardware-level attacks (EMP, NFC cloning, RF injection)."""
+    body = await request.json()
+    return shield.detect_hardware_attack(
+        sensor_readings=body.get("sensor_readings", {}),
+        rf_spectrum=body.get("rf_spectrum"),
+    )
+
+
+@app.post("/api/v1/security/privacy-audit", tags=["CYBER-SHIELD"])
+async def privacy_audit(request: Request):
+    """Audit a data payload for PII exposure (federated learning compliance)."""
+    body = await request.json()
+    return shield.privacy_audit(body.get("data", body))
+
+
+@app.post("/api/v1/security/enforce-data-locality", tags=["CYBER-SHIELD"])
+async def enforce_data_locality(request: Request):
+    """Strip PII from data before transmission (federated learning)."""
+    body = await request.json()
+    return shield.enforce_data_locality(
+        body.get("data", body),
+        allowed_fields=body.get("allowed_fields"),
+    )
+
+
 # ── GANE AGENT LAYER ─────────────────────────────────────────────────────────
 
 @app.post("/api/v1/agent/run", tags=["GANE-AGENT"])
