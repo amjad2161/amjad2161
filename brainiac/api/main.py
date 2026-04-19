@@ -302,6 +302,39 @@ async def get_position():
     }
 
 
+@app.get("/api/v1/nav/gnss", tags=["ORBITAL-NAV"])
+async def get_gnss_status():
+    """Full multi-constellation GNSS status: 6 systems + SBAS + per-satellite signals."""
+    sats = await nav.get_satellite_status()
+    sbas = nav.get_sbas_status()
+    return {
+        "gnss_count": len(nav.GNSS_SYSTEMS),
+        "gnss_systems": nav.GNSS_SYSTEMS,
+        "catalog": nav.gnss_catalog(),
+        "constellations": [
+            {
+                "system": s.system,
+                "visible": s.satellites_visible,
+                "used": s.satellites_used,
+                "hdop": s.hdop, "pdop": s.pdop,
+                "fix_type": s.fix_type,
+                "signals": [
+                    {"prn": sig.prn, "elevation_deg": sig.elevation_deg,
+                     "azimuth_deg": sig.azimuth_deg, "snr_dbhz": sig.snr_dbhz,
+                     "used_in_fix": sig.used_in_fix}
+                    for sig in s.signals
+                ],
+            }
+            for s in sats
+        ],
+        "sbas": [
+            {"system": s.system, "region": s.region, "active": s.active,
+             "correction_age_s": s.correction_age_s}
+            for s in sbas
+        ],
+    }
+
+
 @app.post("/api/v1/nav/turn-by-turn", tags=["ORBITAL-NAV"])
 async def turn_by_turn(req: RouteRequest, lang: str = "en"):
     """Generate localized turn-by-turn directions. Supports en/he/ar (RTL)."""
@@ -365,6 +398,67 @@ async def battery_check(
         route_obj, battery_wh_available=battery_wh,
         wind_factor=wind_factor, reserve_percent=reserve_percent,
     )
+
+
+@app.post("/api/v1/nav/voice-guided-route", tags=["ORBITAL-NAV"])
+async def voice_guided_route(req: RouteRequest, lang: str = "en"):
+    """Full route + turn-by-turn + TTS audio per step (SonicMatrix + Localization + Nav)."""
+    if lang not in ("en", "he", "ar"):
+        raise HTTPException(status_code=400, detail="lang must be one of: en, he, ar")
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    tmode  = TransportMode(req.mode)
+    route = await nav.route(origin, dest, mode=tmode, alternatives=req.alternatives)
+    steps = nav.build_turn_by_turn(route, lang=lang)
+    voice_steps = sonic.synthesize_turn_by_turn(steps, lang=lang)
+    return {
+        "lang": lang,
+        "is_rtl": lang in ("he", "ar"),
+        "route": route.summary(),
+        "step_count": len(steps),
+        "voice_steps": [
+            {"instruction": v["instruction"], "distance_m": v["distance_m"],
+             "lat": v["lat"], "lon": v["lon"],
+             "audio_size_bytes": len(v["audio_bytes"]), "lang": v["lang"]}
+            for v in voice_steps
+        ],
+    }
+
+
+@app.post("/api/v1/nav/medical-evacuation", tags=["ORBITAL-NAV"])
+async def medical_evacuation_route(
+    patient_lat: float, patient_lon: float,
+    hospital_lat: float, hospital_lon: float,
+    heart_rate: int, respiratory_rate: int,
+    systolic_bp: int, gcs: int,
+    spo2: int = 98, mode: str = "drone",
+):
+    """Triage patient → pick protocol → plan fastest evacuation route with priority ETA."""
+    tmode = TransportMode(mode)
+    triage = medical.triage(
+        heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+        systolic_bp=systolic_bp, gcs=gcs, spo2=spo2,
+    )
+    protocol = None
+    if triage.recommended_protocol:
+        proto = medical.get_protocol(triage.recommended_protocol)
+        if proto:
+            protocol = {"name": proto.name, "urgency": proto.urgency.value,
+                        "steps": len(proto.steps), "reference": proto.reference}
+    route_obj = await nav.route(
+        Coordinate(lat=patient_lat, lon=patient_lon),
+        Coordinate(lat=hospital_lat, lon=hospital_lon),
+        mode=tmode,
+    )
+    traffic_factor = 1.0 if triage.category.value == "immediate" else 1.3
+    adjusted = nav.adjust_eta_for_conditions(route_obj.total_duration_s, traffic_factor=traffic_factor)
+    return {
+        "triage": {"category": triage.category.value, "score": triage.score,
+                   "rationale": triage.rationale},
+        "protocol": protocol,
+        "route": {**route_obj.summary(), "adjusted_eta_s": round(adjusted, 1),
+                  "adjusted_eta_min": round(adjusted / 60, 1)},
+    }
 
 
 @app.websocket("/api/v1/nav/ws/position")
@@ -632,6 +726,22 @@ async def scan_input(text: str, source_ip: str = "0.0.0.0"):
             "description": threat.description,
         } if threat else None,
     }
+
+
+@app.post("/api/v1/security/detect-gps-spoofing", tags=["CYBER-SHIELD"])
+async def detect_gps_spoofing(
+    reported_lat: float, reported_lon: float,
+    previous_lat: float | None = None, previous_lon: float | None = None,
+    previous_ts: float | None = None, current_ts: float | None = None,
+    hdop: float = 1.0,
+):
+    """Detect GNSS spoofing based on position, HDOP and temporal plausibility."""
+    return shield.detect_gps_spoofing(
+        reported_lat=reported_lat, reported_lon=reported_lon,
+        previous_lat=previous_lat, previous_lon=previous_lon,
+        previous_ts=previous_ts, current_ts=current_ts,
+        hdop=hdop,
+    )
 
 
 @app.post("/api/v1/security/audit-config", tags=["CYBER-SHIELD"])

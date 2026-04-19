@@ -183,6 +183,9 @@ class Localization:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
+            "status": "ONLINE",
+            "navigation_role": "rtl_turn_by_turn_localizer",
+            "capabilities": ["turn_by_turn_i18n", "rtl_he_ar", "distance_unit_rendering"],
             "lang": self.lang.value,
             "is_rtl": self.is_rtl,
             "supported_languages": [l.value for l in Language],

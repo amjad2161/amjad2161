@@ -235,6 +235,8 @@ class CreativeEngine:
             type_counts[a.media_type.value] = type_counts.get(a.media_type.value, 0) + 1
         return {
             "status": "ONLINE",
+            "navigation_role": "map_and_badge_renderer",
+            "capabilities": ["svg_badges", "route_overlays", "scene_generation"],
             "total_assets": self._generation_count,
             "assets_by_type": type_counts,
         }

@@ -189,6 +189,8 @@ class NeuroCore:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "reasoning_engine",
+            "capabilities": ["mission_planning", "route_reasoning", "natural_language_intents"],
             "total_requests": self._total_requests,
             "total_tokens": self._total_tokens,
             "cache_entries": len(self._cache),

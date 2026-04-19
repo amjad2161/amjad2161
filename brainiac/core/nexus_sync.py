@@ -246,6 +246,8 @@ class NexusSync:
             type_counts[d.device_type.value] = type_counts.get(d.device_type.value, 0) + 1
         return {
             "status": "ONLINE",
+            "navigation_role": "vehicle_iot_bus",
+            "capabilities": ["drone_dispatch", "vehicle_integration", "sensor_ingest", "v2x_messaging"],
             "registered_devices": len(self._devices),
             "connected_devices": connected,
             "device_types": type_counts,

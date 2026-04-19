@@ -60,7 +60,7 @@ async def test_get_position(nav):
 @pytest.mark.asyncio
 async def test_satellite_status(nav):
     statuses = await nav.get_satellite_status()
-    assert len(statuses) == 5   # GPS, GLONASS, Galileo, BeiDou, QZSS
+    assert len(statuses) == 6   # GPS, GLONASS, Galileo, BeiDou, QZSS, NavIC
     for s in statuses:
         assert s.satellites_used > 0
         assert s.fix_type == "RTK_FIXED"
@@ -95,7 +95,7 @@ def test_diagnostics(nav):
     d = nav.diagnostics()
     assert d["status"] == "ONLINE"
     assert d["precision_mode"] == "rtk"
-    assert len(d["gnss_systems"]) == 5
+    assert len(d["gnss_systems"]) == 6
 
 
 # ── Advanced Navigation Features ──────────────────────────────────────────────
@@ -421,6 +421,76 @@ async def test_turn_by_turn_empty_waypoints_returns_arrival_only():
     steps = nav.build_turn_by_turn(route, lang="en")
     assert len(steps) == 1
     assert "arrived" in steps[0]["instruction"]
+
+
+# ── GNSS Constellation Completeness ─────────────────────────────────────────
+
+def test_gnss_systems_include_all_six_constellations():
+    """GANE must support all 6 global GNSS constellations."""
+    nav = OrbitalNav()
+    systems = set(nav.GNSS_SYSTEMS)
+    assert {"GPS", "GLONASS", "Galileo", "BeiDou", "QZSS", "NavIC"} == systems
+
+
+def test_sbas_systems_six_regions():
+    """All 6 regional SBAS augmentation systems present."""
+    nav = OrbitalNav()
+    systems = set(nav.SBAS_SYSTEMS)
+    assert {"WAAS", "EGNOS", "MSAS", "GAGAN", "SDCM", "BDSBAS"} == systems
+
+
+def test_gnss_catalog_has_operator_and_bands():
+    """GNSS catalog must expose operator + signal bands for each constellation."""
+    catalog = OrbitalNav.gnss_catalog()
+    assert len(catalog) == 6
+    for name, meta in catalog.items():
+        assert "operator" in meta
+        assert "active_sats" in meta
+        assert isinstance(meta["bands"], list)
+        assert len(meta["bands"]) >= 1
+
+
+def test_gnss_catalog_operators_match_reality():
+    catalog = OrbitalNav.gnss_catalog()
+    assert catalog["GPS"]["operator"] == "USA"
+    assert catalog["GLONASS"]["operator"] == "Russia"
+    assert catalog["Galileo"]["operator"] == "EU"
+    assert catalog["BeiDou"]["operator"] == "China"
+    assert catalog["QZSS"]["operator"] == "Japan"
+    assert catalog["NavIC"]["operator"] == "India"
+
+
+@pytest.mark.asyncio
+async def test_satellite_status_six_constellations_with_signals():
+    nav = OrbitalNav()
+    statuses = await nav.get_satellite_status()
+    assert len(statuses) == 6
+    systems = {s.system for s in statuses}
+    assert "NavIC" in systems
+    for s in statuses:
+        assert len(s.signals) > 0
+        for sig in s.signals:
+            assert 0 <= sig.elevation_deg <= 90
+            assert 0 <= sig.azimuth_deg <= 360
+            assert 30 <= sig.snr_dbhz <= 55
+
+
+def test_sbas_status_has_six_regions():
+    nav = OrbitalNav()
+    sbas = nav.get_sbas_status()
+    assert len(sbas) == 6
+    regions = {s.region for s in sbas}
+    assert "Europe" in regions
+    assert "North America" in regions
+    assert "India" in regions
+
+
+def test_orbital_nav_diagnostics_reports_navigation_role():
+    nav = OrbitalNav()
+    d = nav.diagnostics()
+    assert d["navigation_role"] == "primary_engine"
+    assert d["gnss_count"] == 6
+    assert d["sbas_count"] == 6
 
 
 @pytest.mark.asyncio

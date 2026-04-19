@@ -270,6 +270,8 @@ class SatLink:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE" if self._uplink_active else "STANDBY",
+            "navigation_role": "satellite_uplink",
+            "capabilities": ["emergency_sos", "rtk_corrections_uplink", "position_beacon", "gnss_aiding"],
             "node_id": self.node_id,
             "uplink_active": self._uplink_active,
             "link_quality": self._link_quality,

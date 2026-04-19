@@ -310,6 +310,79 @@ class Brainiac:
         result = self.sonic.synthesize(text, lang=lang)
         return result.audio_bytes
 
+    # ── Navigation Compound Operations (cross-module) ────────────────────────
+
+    async def voice_guided_route(
+        self,
+        origin: Coordinate, destination: Coordinate,
+        mode: TransportMode = TransportMode.DRIVE,
+        lang: str = "en",
+    ) -> dict[str, Any]:
+        """
+        Full voice-guided route: OrbitalNav plans + Localization phrases + SonicMatrix speaks.
+
+        Returns route summary + per-step voice payloads.
+        """
+        route = await self.nav.route(origin, destination, mode=mode)
+        steps = self.nav.build_turn_by_turn(route, lang=lang)
+        voice_steps = self.sonic.synthesize_turn_by_turn(steps, lang=lang)
+        return {
+            "route": route.summary(),
+            "lang": lang,
+            "step_count": len(steps),
+            "voice_steps": [
+                {"instruction": v["instruction"], "distance_m": v["distance_m"],
+                 "lat": v["lat"], "lon": v["lon"], "audio_size_bytes": len(v["audio_bytes"]),
+                 "lang": v["lang"]}
+                for v in voice_steps
+            ],
+        }
+
+    async def medical_evacuation_route(
+        self,
+        patient_location: Coordinate,
+        hospital_location: Coordinate,
+        heart_rate: int, respiratory_rate: int,
+        systolic_bp: int, gcs: int,
+        spo2: int = 98,
+        mode: TransportMode = TransportMode.DRONE,
+    ) -> dict[str, Any]:
+        """
+        Medical evacuation routing: triages patient, picks protocol, plans fastest route.
+
+        Returns triage result + protocol + route summary with adjusted ETA.
+        """
+        triage = self.medical.triage(
+            heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+            systolic_bp=systolic_bp, gcs=gcs, spo2=spo2,
+        )
+        protocol = None
+        if triage.recommended_protocol:
+            proto = self.medical.get_protocol(triage.recommended_protocol)
+            if proto:
+                protocol = {"name": proto.name, "urgency": proto.urgency.value,
+                            "steps": len(proto.steps), "reference": proto.reference}
+
+        route = await self.nav.route(patient_location, hospital_location, mode=mode)
+        # Critical patients: no traffic penalty (dispatch sirens / priority corridor)
+        traffic_factor = 1.0 if triage.category.value == "immediate" else 1.3
+        eta_adjusted = self.nav.adjust_eta_for_conditions(
+            route.total_duration_s, traffic_factor=traffic_factor,
+        )
+        return {
+            "triage": {
+                "category": triage.category.value,
+                "score": triage.score,
+                "rationale": triage.rationale,
+            },
+            "protocol": protocol,
+            "route": {
+                **route.summary(),
+                "adjusted_eta_s": round(eta_adjusted, 1),
+                "adjusted_eta_min": round(eta_adjusted / 60, 1),
+            },
+        }
+
     # ── Health & Self-Diagnostic ──────────────────────────────────────────────
 
     async def health_report(self) -> HealthReport:

@@ -420,6 +420,8 @@ class MedicalProtocols:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "emergency_evacuation_intelligence",
+            "capabilities": ["triage_scoring", "dose_calculation", "protocol_lookup", "enroute_medical"],
             "protocols": len(PROTOCOL_LIBRARY),
             "drugs": len(DRUG_DATABASE),
             "categories": [c.value for c in ProtocolCategory],
