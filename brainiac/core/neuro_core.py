@@ -64,10 +64,10 @@ class NeuroCore:
     - Automatic retry with exponential back-off
     """
 
-    MODELS = {
-        ReasoningDepth.DEEP:     os.getenv("BRAINIAC_MODEL_DEEP", "claude-3-5-sonnet-latest"),
-        ReasoningDepth.STANDARD: os.getenv("BRAINIAC_MODEL_STANDARD", "claude-sonnet-4-5"),
-        ReasoningDepth.FAST:     os.getenv("BRAINIAC_MODEL_FAST", "claude-3-5-haiku-latest"),
+    DEFAULT_MODELS = {
+        ReasoningDepth.DEEP: "claude-3-5-sonnet-latest",
+        ReasoningDepth.STANDARD: "claude-sonnet-4-5",
+        ReasoningDepth.FAST: "claude-3-5-haiku-latest",
     }
 
     SYSTEM_PROMPT = (
@@ -87,6 +87,20 @@ class NeuroCore:
     ) -> None:
         self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self._client = anthropic.AsyncAnthropic(api_key=self._api_key) if self._api_key else None
+        self.models = {
+            ReasoningDepth.DEEP: os.getenv(
+                "BRAINIAC_MODEL_DEEP",
+                self.DEFAULT_MODELS[ReasoningDepth.DEEP],
+            ),
+            ReasoningDepth.STANDARD: os.getenv(
+                "BRAINIAC_MODEL_STANDARD",
+                self.DEFAULT_MODELS[ReasoningDepth.STANDARD],
+            ),
+            ReasoningDepth.FAST: os.getenv(
+                "BRAINIAC_MODEL_FAST",
+                self.DEFAULT_MODELS[ReasoningDepth.FAST],
+            ),
+        }
         self._cache: dict[str, Thought] = {}
         self._cache_size = cache_size
         self.default_depth = default_depth
@@ -137,7 +151,7 @@ class NeuroCore:
     ) -> AsyncIterator[str]:
         """Stream tokens as they are produced by the model."""
         depth = depth or self.default_depth
-        model = self.MODELS[depth]
+        model = self.models[depth]
         if self._client is None:
             yield "NEURO-CORE unavailable: ANTHROPIC_API_KEY is not configured."
             return
@@ -195,7 +209,7 @@ class NeuroCore:
             "total_requests": self._total_requests,
             "total_tokens": self._total_tokens,
             "cache_entries": len(self._cache),
-            "models": {d.value: m for d, m in self.MODELS.items()},
+            "models": {d.value: m for d, m in self.models.items()},
             "default_depth": self.default_depth.value,
         }
 
@@ -207,7 +221,7 @@ class NeuroCore:
         depth: ReasoningDepth,
         system_override: str | None,
     ) -> Thought:
-        model = self.MODELS[depth]
+        model = self.models[depth]
         system = system_override or self.SYSTEM_PROMPT
         t0 = time.perf_counter()
         if self._client is None:
@@ -267,7 +281,7 @@ class NeuroCore:
                 log.error("neuro_core.api_error", error=str(exc))
                 # Cascade to cheaper model
                 depth = ReasoningDepth.FAST
-                model = self.MODELS[depth]
+                model = self.models[depth]
 
         raise RuntimeError("NEURO-CORE: all retry attempts exhausted")
 

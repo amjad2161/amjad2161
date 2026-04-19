@@ -126,6 +126,7 @@ def test_nested_malicious_payload_rejected(client):
     }
     r = client.post("/api/v1/telemetry/ingest", json=payload)
     assert r.status_code == 400
+    assert r.json()["error"] in {"Malicious input detected", "Malformed or malicious request body"}
 
 
 def test_telemetry_summary(client):

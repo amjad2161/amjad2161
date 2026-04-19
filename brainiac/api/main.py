@@ -107,7 +107,7 @@ async def security_middleware(request: Request, call_next):
                 payload = json.loads(body_str)
                 fields_scanned = 0
 
-                def _scan_nested(value: object, depth: int = 0) -> None:
+                def scan_nested_strings(value: object, depth: int = 0) -> None:
                     nonlocal fields_scanned
                     if depth > _MAX_SCAN_DEPTH or fields_scanned >= _SCAN_FIELDS:
                         return
@@ -115,20 +115,24 @@ async def security_middleware(request: Request, call_next):
                         for nested in value.values():
                             if fields_scanned >= _SCAN_FIELDS:
                                 break
-                            _scan_nested(nested, depth + 1)
+                            scan_nested_strings(nested, depth + 1)
                     elif isinstance(value, list):
                         for nested in value:
                             if fields_scanned >= _SCAN_FIELDS:
                                 break
-                            _scan_nested(nested, depth + 1)
+                            scan_nested_strings(nested, depth + 1)
                     elif isinstance(value, str):
                         fields_scanned += 1
                         nested_threat = shield.scan_input(value, source_ip=client_ip)
                         if nested_threat and nested_threat.threat_level.value >= 3:
                             raise ValueError("Malicious nested content detected")
 
-                _scan_nested(payload)
+                scan_nested_strings(payload)
 
+            # FastAPI request bodies are single-read streams. Because middleware
+            # already consumed `request.body()`, rebuild Request with a custom
+            # receive callable that replays the buffered bytes for downstream
+            # body parsing in route handlers.
             async def _receive() -> dict:
                 return {"type": "http.request", "body": body_bytes, "more_body": False}
 

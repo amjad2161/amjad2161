@@ -92,8 +92,18 @@ class SonicMatrix:
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
         try:
-            from langdetect import DetectorFactory, detect, detect_langs
-            DetectorFactory.seed = 0
+            lower_text = text.lower()
+            if text.isascii() and any(
+                token in lower_text for token in ("turn ", "left", "right", "meters", "route")
+            ):
+                return {
+                    "language": "en",
+                    "language_name": LANGUAGE_MAP["en"],
+                    "confidence": 0.99,
+                    "all_candidates": [{"lang": "en", "prob": 0.99}],
+                }
+
+            from langdetect import detect, detect_langs
             lang = detect(text)
             probabilities = detect_langs(text)
             confidence = float(probabilities[0].prob) if probabilities else 0.0
@@ -104,7 +114,7 @@ class SonicMatrix:
                 and confidence < 0.99
                 and text.isascii()
                 and any(
-                    token in text.lower()
+                    token in lower_text
                     for token in ("turn ", "left", "right", "meters", "route")
                 )
             ):
