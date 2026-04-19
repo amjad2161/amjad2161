@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from brainiac.core.creative_engine import CreativeEngine
     from brainiac.core.orbital_nav import OrbitalNav
     from brainiac.core.telemetry_hub import TelemetryHub
+    from brainiac.core.medical_protocols import MedicalProtocols
 
 log = structlog.get_logger("brainiac.agent.router")
 
@@ -53,6 +54,7 @@ class AgentRouter:
         telem: "TelemetryHub | None" = None,
         creative: "CreativeEngine | None" = None,
         nav: "OrbitalNav | None" = None,
+        medical: "MedicalProtocols | None" = None,
         auto_approve: bool = True,
     ) -> None:
         self.memory = AgentMemory()
@@ -62,7 +64,7 @@ class AgentRouter:
                 api_key=api_key, auto_approve=auto_approve,
             ),
             "medical": MedicalContentAgent(
-                memory=self.memory, creative=creative,
+                memory=self.memory, creative=creative, medical=medical,
                 api_key=api_key, auto_approve=auto_approve,
             ),
             "navigation": NavigationAgent(

@@ -243,6 +243,128 @@ class BrainiacClient:
         r.raise_for_status()
         return r.text
 
+    # ── Navigation Enhancements ──────────────────────────────────────────────
+
+    async def turn_by_turn(
+        self,
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        mode: str = "driving", lang: str = "en",
+    ) -> dict:
+        r = await self._client.post(
+            "/api/v1/nav/turn-by-turn",
+            params={"lang": lang},
+            json={
+                "origin_lat": origin_lat, "origin_lon": origin_lon,
+                "dest_lat": dest_lat, "dest_lon": dest_lon,
+                "mode": mode, "alternatives": 1,
+            },
+        )
+        r.raise_for_status()
+        return r.json()
+
+    async def eta_with_conditions(
+        self,
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        mode: str = "driving",
+        hour: int | None = None, weekday: int = 0,
+        weather_factor: float = 1.0,
+    ) -> dict:
+        params = {
+            "origin_lat": origin_lat, "origin_lon": origin_lon,
+            "dest_lat": dest_lat, "dest_lon": dest_lon,
+            "mode": mode, "weekday": weekday, "weather_factor": weather_factor,
+        }
+        if hour is not None:
+            params["hour"] = hour
+        r = await self._client.post("/api/v1/nav/eta-with-conditions", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def battery_check(
+        self,
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        battery_wh: float,
+        mode: str = "drone",
+        wind_factor: float = 1.0,
+        reserve_percent: float = 20.0,
+    ) -> dict:
+        r = await self._client.post(
+            "/api/v1/nav/battery-check",
+            params={"battery_wh": battery_wh, "wind_factor": wind_factor,
+                    "reserve_percent": reserve_percent},
+            json={
+                "origin_lat": origin_lat, "origin_lon": origin_lon,
+                "dest_lat": dest_lat, "dest_lon": dest_lon,
+                "mode": mode, "alternatives": 0,
+            },
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # ── Medical ──────────────────────────────────────────────────────────────
+
+    async def medical_protocols(self, category: str | None = None) -> dict:
+        params = {"category": category} if category else {}
+        r = await self._client.get("/api/v1/medical/protocols", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def medical_protocol(self, name: str) -> dict:
+        r = await self._client.get(f"/api/v1/medical/protocol/{name}")
+        r.raise_for_status()
+        return r.json()
+
+    async def medical_dose(self, drug: str, weight_kg: float, route: str | None = None) -> dict:
+        params = {"drug": drug, "weight_kg": weight_kg}
+        if route:
+            params["route"] = route
+        r = await self._client.post("/api/v1/medical/dose", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def medical_triage(
+        self, heart_rate: int, respiratory_rate: int, systolic_bp: int, gcs: int,
+        spo2: int = 98, temperature_c: float = 37.0,
+    ) -> dict:
+        r = await self._client.post(
+            "/api/v1/medical/triage",
+            params={
+                "heart_rate": heart_rate, "respiratory_rate": respiratory_rate,
+                "systolic_bp": systolic_bp, "gcs": gcs,
+                "spo2": spo2, "temperature_c": temperature_c,
+            },
+        )
+        r.raise_for_status()
+        return r.json()
+
+    async def medical_drugs(self) -> dict:
+        r = await self._client.get("/api/v1/medical/drugs")
+        r.raise_for_status()
+        return r.json()
+
+    async def medical_drug(self, name: str) -> dict:
+        r = await self._client.get(f"/api/v1/medical/drug/{name}")
+        r.raise_for_status()
+        return r.json()
+
+    # ── Agent ────────────────────────────────────────────────────────────────
+
+    async def agent_run(self, prompt: str, force_agent: str | None = None) -> dict:
+        body = {"prompt": prompt}
+        if force_agent:
+            body["force_agent"] = force_agent
+        r = await self._client.post("/api/v1/agent/run", json=body)
+        r.raise_for_status()
+        return r.json()
+
+    async def agent_route_preview(self, prompt: str) -> dict:
+        r = await self._client.post("/api/v1/agent/route-preview", json={"prompt": prompt})
+        r.raise_for_status()
+        return r.json()
+
 
 # ── Convenience sync wrapper ──────────────────────────────────────────────────
 

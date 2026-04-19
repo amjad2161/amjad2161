@@ -28,6 +28,7 @@ from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
+from brainiac.core.medical_protocols import MedicalProtocols, ProtocolCategory, DrugRoute
 from brainiac.api.models import (
     ThinkRequest, ThinkResponse,
     RouteRequest, RouteResponse,
@@ -59,13 +60,11 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
-
-from brainiac.core.medical_protocols import MedicalProtocols, ProtocolCategory, DrugRoute
 medical = MedicalProtocols()
 
 _agent_router = AgentRouter(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
-    telem=telem, creative=creative, nav=nav,
+    telem=telem, creative=creative, nav=nav, medical=medical,
     auto_approve=True,
 )
 
@@ -169,17 +168,19 @@ async def root():
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.0.0",
+        version="2.0.0",
         modules={
-            "neuro_core":      "ONLINE",
-            "orbital_nav":     "ONLINE",
-            "satlink":         "ONLINE",
-            "sonic_matrix":    "ONLINE",
-            "nexus_sync":      "ONLINE",
-            "telemetry_hub":   "ONLINE",
-            "cyber_shield":    "ONLINE",
-            "creative_engine": "ONLINE",
-            "omni_vision":     "ONLINE",
+            "neuro_core":        "ONLINE",
+            "orbital_nav":       "ONLINE",
+            "satlink":           "ONLINE",
+            "sonic_matrix":      "ONLINE",
+            "nexus_sync":        "ONLINE",
+            "telemetry_hub":     "ONLINE",
+            "cyber_shield":      "ONLINE",
+            "creative_engine":   "ONLINE",
+            "omni_vision":       "ONLINE",
+            "localization":      "ONLINE",
+            "medical_protocols": "ONLINE",
         },
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )

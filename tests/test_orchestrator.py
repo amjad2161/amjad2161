@@ -19,7 +19,7 @@ async def brainiac():
 async def test_boot_brings_all_modules_online(brainiac):
     report = await brainiac.health_report()
     assert report.system_state == SystemState.ONLINE
-    assert len(report.modules) == 9
+    assert len(report.modules) == 11
     assert not report.alerts
 
 

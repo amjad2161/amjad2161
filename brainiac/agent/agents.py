@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from brainiac.core.creative_engine import CreativeEngine
     from brainiac.core.orbital_nav import OrbitalNav
     from brainiac.core.telemetry_hub import TelemetryHub
+    from brainiac.core.medical_protocols import MedicalProtocols
 
 log = structlog.get_logger("brainiac.agent.agents")
 
@@ -172,18 +173,15 @@ Guidelines:
 - Use `generate_content` to produce structured educational materials.
 """
 
-# ACLS standard doses (educational reference). Fixed constant — built once.
-_ACLS_DOSES: dict[str, dict] = {
-    "epinephrine": {"dose_mg_per_kg": 0.01, "max_mg": 1.0, "route": "IV/IO"},
-    "amiodarone":  {"dose_mg_per_kg": 5.0,  "max_mg": 300.0, "route": "IV"},
-    "atropine":    {"dose_mg_per_kg": 0.02, "max_mg": 3.0, "route": "IV/IO"},
-}
-
-
 def _build_medical_tools(
     creative: "CreativeEngine | None" = None,
+    medical: "MedicalProtocols | None" = None,
     auto_approve: bool = True,
 ) -> ToolRegistry:
+    # Lazy-import to avoid circular: MedicalProtocols owns the canonical drug database.
+    from brainiac.core.medical_protocols import MedicalProtocols as _MP
+    med_engine = medical or _MP()
+
     registry = ToolRegistry(auto_approve=auto_approve)
 
     async def generate_content(
@@ -200,16 +198,38 @@ def _build_medical_tools(
         }
 
     async def calculate_drug_dose(drug: str, weight_kg: float, indication: str) -> dict:
-        info = _ACLS_DOSES.get(drug.lower())
-        if not info:
-            return {"error": f"Drug '{drug}' not in formulary. Consult pharmacist."}
-        calculated = min(weight_kg * info["dose_mg_per_kg"], info["max_mg"])
+        result = med_engine.calculate_dose(drug, weight_kg)
+        if "error" in result:
+            return {"error": result["error"]}
+        return {**result, "indication": indication}
+
+    async def lookup_protocol(name: str) -> dict:
+        proto = med_engine.get_protocol(name)
+        if not proto:
+            return {"error": f"Protocol '{name}' not found",
+                    "available": med_engine.list_protocols()}
         return {
-            "drug": drug, "weight_kg": weight_kg, "indication": indication,
-            "calculated_dose_mg": round(calculated, 2),
-            "max_dose_mg": info["max_mg"], "route": info["route"],
-            "guideline": "AHA 2020 ACLS",
-            "disclaimer": "VERIFY WITH PHARMACIST. Educational use only.",
+            "name": proto.name,
+            "category": proto.category.value,
+            "urgency": proto.urgency.value,
+            "steps": [{"n": s.step_number, "action": s.action, "critical": s.critical}
+                      for s in proto.steps],
+            "reference": proto.reference,
+        }
+
+    async def triage_vitals(
+        heart_rate: int, respiratory_rate: int, systolic_bp: int,
+        gcs: int, spo2: int = 98, temperature_c: float = 37.0,
+    ) -> dict:
+        result = med_engine.triage(
+            heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+            systolic_bp=systolic_bp, gcs=gcs, spo2=spo2, temperature_c=temperature_c,
+        )
+        return {
+            "category": result.category.value,
+            "score": result.score,
+            "rationale": result.rationale,
+            "recommended_protocol": result.recommended_protocol,
         }
 
     async def generate_badge_label(text: str, style: str = "clinical") -> dict:
@@ -248,6 +268,33 @@ def _build_medical_tools(
         handler=calculate_drug_dose, reversible=True,
     ))
     registry.register(ToolDef(
+        name="lookup_protocol",
+        description="Look up a clinical protocol by name (e.g., acls_cardiac_arrest, stroke_code, stemi_protocol)",
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+        handler=lookup_protocol, reversible=True,
+    ))
+    registry.register(ToolDef(
+        name="triage_vitals",
+        description="Score a patient's vitals and recommend a protocol",
+        parameters={
+            "type": "object",
+            "properties": {
+                "heart_rate": {"type": "integer"},
+                "respiratory_rate": {"type": "integer"},
+                "systolic_bp": {"type": "integer"},
+                "gcs": {"type": "integer"},
+                "spo2": {"type": "integer"},
+                "temperature_c": {"type": "number"},
+            },
+            "required": ["heart_rate", "respiratory_rate", "systolic_bp", "gcs"],
+        },
+        handler=triage_vitals, reversible=True,
+    ))
+    registry.register(ToolDef(
         name="generate_badge_label",
         description="Generate an SVG badge for a medical protocol label (returns null SVG when CreativeEngine is unavailable)",
         parameters={
@@ -272,6 +319,7 @@ class MedicalContentAgent(BaseAgent):
         self,
         memory: AgentMemory | None = None,
         creative: "CreativeEngine | None" = None,
+        medical: "MedicalProtocols | None" = None,
         api_key: str | None = None,
         auto_approve: bool = True,
     ) -> None:
@@ -282,7 +330,7 @@ class MedicalContentAgent(BaseAgent):
             fact_source=FactSource.MEDICAL,
             auto_approve_tools=auto_approve,
         )
-        tools = _build_medical_tools(creative, auto_approve)
+        tools = _build_medical_tools(creative, medical, auto_approve)
         self._loop = AgentLoop(config, tools, self.memory, api_key=api_key)
         log.info("medical_content.init")
 

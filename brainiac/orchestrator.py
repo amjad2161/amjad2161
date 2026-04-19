@@ -21,6 +21,7 @@ import structlog
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    Localization, MedicalProtocols,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
@@ -106,6 +107,8 @@ class Brainiac:
         self.shield   = CyberShield(secret_key=secret_key or "BRAINIAC-ORCHESTRATOR")
         self.creative = CreativeEngine()
         self.vision   = OmniVision()
+        self.localization = Localization()
+        self.medical  = MedicalProtocols()
 
         self._state      = SystemState.BOOTING
         self._boot_time  = time.time()
@@ -313,15 +316,17 @@ class Brainiac:
         """Produce a comprehensive health report for all modules."""
         alerts = []
         modules = {
-            "neuro_core":      self.neuro.diagnostics()["status"],
-            "orbital_nav":     self.nav.diagnostics()["status"],
-            "sonic_matrix":    self.sonic.diagnostics()["status"],
-            "satlink":         self.satlink.diagnostics()["status"],
-            "nexus_sync":      self.nexus.diagnostics()["status"],
-            "telemetry_hub":   self.telem.diagnostics()["status"],
-            "cyber_shield":    self.shield.diagnostics()["status"],
-            "creative_engine": self.creative.diagnostics()["status"],
-            "omni_vision":     self.vision.diagnostics()["status"],
+            "neuro_core":        self.neuro.diagnostics()["status"],
+            "orbital_nav":       self.nav.diagnostics()["status"],
+            "sonic_matrix":      self.sonic.diagnostics()["status"],
+            "satlink":           self.satlink.diagnostics()["status"],
+            "nexus_sync":        self.nexus.diagnostics()["status"],
+            "telemetry_hub":     self.telem.diagnostics()["status"],
+            "cyber_shield":      self.shield.diagnostics()["status"],
+            "creative_engine":   self.creative.diagnostics()["status"],
+            "omni_vision":       self.vision.diagnostics()["status"],
+            "localization":      "ONLINE",
+            "medical_protocols": self.medical.diagnostics()["status"],
         }
 
         offline = [name for name, status in modules.items() if status == "OFFLINE"]

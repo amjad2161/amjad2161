@@ -21,7 +21,7 @@ async def client():
 async def test_health(client):
     data = await client.health()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 9
+    assert len(data["modules"]) == 11
 
 
 @pytest.mark.asyncio
@@ -108,3 +108,57 @@ def test_brainiac_sync_context_manager():
     assert hasattr(sync, "__enter__")
     assert hasattr(sync, "__exit__")
     sync.close()
+
+
+# ── New endpoints wired through the SDK ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_sdk_turn_by_turn(client):
+    result = await client.turn_by_turn(32.0, 34.0, 32.1, 34.1, mode="drone", lang="he")
+    assert result["lang"] == "he"
+    assert result["is_rtl"] is True
+    assert len(result["instructions"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_sdk_eta_with_traffic(client):
+    result = await client.eta_with_conditions(
+        32.0, 34.0, 33.0, 35.0, mode="driving", hour=8, weekday=1,
+    )
+    assert result["traffic_factor"] == 1.7
+    assert result["adjusted_duration_s"] > result["duration_s"]
+
+
+@pytest.mark.asyncio
+async def test_sdk_battery_check(client):
+    result = await client.battery_check(
+        32.0, 34.0, 32.01, 34.01, battery_wh=10000, mode="drone",
+    )
+    assert result["feasible"] is True
+
+
+@pytest.mark.asyncio
+async def test_sdk_medical_protocols_list(client):
+    result = await client.medical_protocols()
+    assert "acls_cardiac_arrest" in result["protocols"]
+
+
+@pytest.mark.asyncio
+async def test_sdk_medical_dose(client):
+    result = await client.medical_dose("epinephrine", 70.0)
+    assert result["drug"] == "Epinephrine"
+    assert result["actual_dose_mg"] > 0
+
+
+@pytest.mark.asyncio
+async def test_sdk_medical_triage(client):
+    result = await client.medical_triage(
+        heart_rate=0, respiratory_rate=0, systolic_bp=0, gcs=3,
+    )
+    assert result["category"] == "immediate"
+
+
+@pytest.mark.asyncio
+async def test_sdk_medical_drug_info(client):
+    result = await client.medical_drug("naloxone")
+    assert result["drug"] == "Naloxone"

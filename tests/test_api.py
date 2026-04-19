@@ -27,7 +27,7 @@ def test_health(client):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 9
+    assert len(data["modules"]) == 11
     for mod_status in data["modules"].values():
         assert mod_status == "ONLINE"
     assert data["uptime_s"] >= 0
