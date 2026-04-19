@@ -850,7 +850,10 @@ async def analyze_image(request: Request):
 async def image_info(request: Request):
     image_bytes = await request.body()
     _validate_image_request(request, image_bytes)
-    return vision.image_info(image_bytes)
+    info = vision.image_info(image_bytes)
+    if "error" in info:
+        raise HTTPException(status_code=422, detail="Unable to process image")
+    return info
 
 
 # ── GANE AGENT LAYER ─────────────────────────────────────────────────────────

@@ -53,9 +53,11 @@ async def _cmd_status() -> int:
     print("┌───────────────────┬────────────┐")
     print("│ MODULE            │ STATUS     │")
     print("├───────────────────┼────────────┤")
+    allowed = {"ONLINE", "OFFLINE", "DEGRADED", "UNKNOWN", "BOOTING", "MAINTENANCE", "EMERGENCY"}
     for name, mod in modules.items():
         diag = mod.diagnostics()
-        status = diag.get("status", "ONLINE" if diag else "UNKNOWN")
+        raw_status = str(diag.get("status", "ONLINE" if diag else "UNKNOWN")).upper()
+        status = raw_status if raw_status in allowed else "UNKNOWN"
         print(f"│ {name} │ {status:<10} │")
     print("└───────────────────┴────────────┘")
     print(f"\n✅ All {len(modules)} G.A.N.E systems verified.\n")
