@@ -5,39 +5,54 @@ All 9 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import time
+import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
+from brainiac.api.models import (
+    DetectLanguageRequest,
+    HealthResponse,
+    ImagePromptRequest,
+    PublishRequest,
+    RegisterDeviceRequest,
+    RouteRequest,
+    RouteResponse,
+    SensorReadingRequest,
+    SOSRequest,
+    SOSResponse,
+    TelemetryIngestResponse,
+    ThinkRequest,
+    ThinkResponse,
+    TranslateRequest,
+    TTSRequest,
+)
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    CreativeEngine,
+    CyberShield,
+    NeuroCore,
+    NexusSync,
+    OmniVision,
+    OrbitalNav,
+    SatLink,
+    SonicMatrix,
+    TelemetryHub,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
-from brainiac.api.models import (
-    ThinkRequest, ThinkResponse,
-    RouteRequest, RouteResponse,
-    SOSRequest, SOSResponse,
-    SensorReadingRequest, TelemetryIngestResponse,
-    TranslateRequest, DetectLanguageRequest, TTSRequest,
-    ImagePromptRequest,
-    RegisterDeviceRequest, PublishRequest,
-    HealthResponse,
-)
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+_MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -77,28 +92,58 @@ app.add_middleware(
 )
 
 
+def _validate_request_size(content_length: str | None, body_len: int | None = None) -> None:
+    """Validate request body size against the hard 10MB limit."""
+    if content_length:
+        try:
+            if int(content_length) > _MAX_REQUEST_BODY_BYTES:
+                raise HTTPException(status_code=413, detail="Request body too large")
+        except ValueError:
+            pass
+    if body_len is not None and body_len > _MAX_REQUEST_BODY_BYTES:
+        raise HTTPException(status_code=413, detail="Request body too large")
+
+
 # ── Security middleware ───────────────────────────────────────────────────────
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
     client_ip = request.client.host if request.client else "0.0.0.0"
 
     # Rate limiting
     if not shield.check_rate_limit(client_ip):
-        return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
+        return JSONResponse(
+            status_code=429,
+            content={"error": "Rate limit exceeded"},
+            headers={"X-Request-Id": request_id},
+        )
 
     # Scan body for injection on write methods
     if request.method in ("POST", "PUT", "PATCH"):
         try:
+            _validate_request_size(request.headers.get("content-length"))
             body_bytes = await request.body()
+            _validate_request_size(None, len(body_bytes))
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
-                return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
+                return JSONResponse(
+                    status_code=400,
+                    content={"error": "Malicious input detected"},
+                    headers={"X-Request-Id": request_id},
+                )
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers={"X-Request-Id": request_id},
+            )
         except Exception:
             pass
 
     response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -168,7 +213,7 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -195,7 +240,7 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -388,7 +433,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
@@ -432,9 +477,11 @@ async def audit_config(config: dict):
 @app.post("/api/v1/vision/analyze", tags=["OMNI-VISION"])
 async def analyze_image(request: Request):
     """Accepts raw image bytes in request body."""
+    _validate_request_size(request.headers.get("content-length"))
     image_bytes = await request.body()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    _validate_request_size(None, len(image_bytes))
     analysis = vision.analyze_scene(image_bytes)
     return {
         "description": analysis.description,
@@ -446,5 +493,7 @@ async def analyze_image(request: Request):
 
 @app.post("/api/v1/vision/info", tags=["OMNI-VISION"])
 async def image_info(request: Request):
+    _validate_request_size(request.headers.get("content-length"))
     image_bytes = await request.body()
+    _validate_request_size(None, len(image_bytes))
     return vision.image_info(image_bytes)

@@ -3,6 +3,7 @@ BRAINIAC CLI — Command-line interface for diagnostics and demos.
 
 Usage:
     python -m brainiac.cli status
+    python -m brainiac.cli boot
     python -m brainiac.cli demo
     python -m brainiac.cli serve
 """
@@ -110,6 +111,17 @@ async def _cmd_demo() -> int:
     return 0
 
 
+async def _cmd_boot() -> int:
+    """Boot all modules and validate basic connectivity."""
+    from brainiac.core import SatLink
+
+    code = await _cmd_status()
+    satlink = SatLink()
+    await satlink.connect()
+    print("✅ Boot sequence complete.\n")
+    return code
+
+
 def _cmd_serve() -> int:
     import uvicorn
     _print_banner()
@@ -124,6 +136,7 @@ def main() -> int:
         _print_banner()
         print("Commands:")
         print("  status  — Show module status")
+        print("  boot    — Boot all modules")
         print("  demo    — Run end-to-end demo flow")
         print("  serve   — Start the FastAPI server")
         return 0
@@ -131,6 +144,8 @@ def main() -> int:
     cmd = args[0]
     if cmd == "status":
         return asyncio.run(_cmd_status())
+    if cmd == "boot":
+        return asyncio.run(_cmd_boot())
     if cmd == "demo":
         return asyncio.run(_cmd_demo())
     if cmd == "serve":
