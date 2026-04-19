@@ -52,8 +52,34 @@ Notable system endpoints:
 - `GET /diagnostics`
 - `GET /api/v1/system/cost-stats`
 - `GET /api/v1/system/watchdog`
-- `POST /api/v1/system/shutdown-test` (admin header required)
+- `POST /api/v1/system/shutdown-test` (admin API key required)
 - `GET /api/v1/nav/cache-stats`
+
+## Security
+
+Set API keys in your environment:
+
+```bash
+export BRAINIAC_API_KEYS="ops-key-1,ops-key-2"
+export BRAINIAC_ADMIN_API_KEYS="admin-key-1"
+```
+
+- Public endpoints (no API key required): `/`, `/health`, `/diagnostics`, `/metrics`
+- Protected endpoints: `/api/v1/system/*`, `/api/v1/security/*`
+- Admin-only endpoints: `POST /api/v1/system/shutdown-test`, `POST /api/v1/security/audit-config`
+
+Example calls:
+
+```bash
+# Public
+curl http://localhost:8000/health
+
+# Protected
+curl -H "X-API-Key: ops-key-1" http://localhost:8000/api/v1/system/cost-stats
+
+# Admin-only
+curl -X POST -H "X-API-Key: admin-key-1" http://localhost:8000/api/v1/system/shutdown-test
+```
 
 ## Docker
 

@@ -10,10 +10,16 @@ import pytest
 import structlog
 from fastapi.testclient import TestClient
 
+API_KEY = "test-key"
+ADMIN_API_KEY = "test-admin-key"
+
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """Create test client with mocked AI calls."""
+    monkeypatch.setenv("BRAINIAC_API_KEYS", API_KEY)
+    monkeypatch.setenv("BRAINIAC_ADMIN_API_KEYS", ADMIN_API_KEY)
+    monkeypatch.setenv("BRAINIAC_SECRET", "test-secret-for-api")
     with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
         from brainiac.api.main import app
 
@@ -57,6 +63,12 @@ def test_diagnostics(client):
         assert mod in data
 
 
+def test_diagnostics_does_not_leak_secret(client):
+    r = client.get("/diagnostics")
+    assert r.status_code == 200
+    assert "test-secret-for-api" not in r.text
+
+
 def test_metrics(client):
     r = client.get("/metrics")
     assert r.status_code == 200
@@ -64,26 +76,36 @@ def test_metrics(client):
 
 
 def test_cost_stats_endpoint(client):
-    r = client.get("/api/v1/system/cost-stats")
+    r = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
     assert r.status_code == 200
     data = r.json()
     assert "hourly_cost_usd" in data
     assert "max_usd_per_hour" in data
 
 
+def test_cost_stats_requires_api_key(client):
+    r = client.get("/api/v1/system/cost-stats")
+    assert r.status_code == 401
+
+
 def test_watchdog_endpoint(client):
-    r = client.get("/api/v1/system/watchdog")
+    r = client.get("/api/v1/system/watchdog", headers={"X-API-Key": API_KEY})
     assert r.status_code == 200
     assert "module_health" in r.json()
 
 
 def test_shutdown_test_requires_admin(client):
-    r = client.post("/api/v1/system/shutdown-test")
+    r = client.post("/api/v1/system/shutdown-test", headers={"X-API-Key": API_KEY})
     assert r.status_code == 403
 
 
+def test_shutdown_test_requires_api_key(client):
+    r = client.post("/api/v1/system/shutdown-test")
+    assert r.status_code == 401
+
+
 def test_shutdown_test_admin(client):
-    r = client.post("/api/v1/system/shutdown-test", headers={"X-BRAINIAC-Admin": "brainiac-admin"})
+    r = client.post("/api/v1/system/shutdown-test", headers={"X-API-Key": ADMIN_API_KEY})
     assert r.status_code == 200
     assert r.json()["marker"] == "shutdown_test_triggered"
 
@@ -188,7 +210,11 @@ def test_supported_languages(client):
 
 
 def test_scan_clean_input(client):
-    r = client.post("/api/v1/security/scan-input", params={"text": "Hello safe world"})
+    r = client.post(
+        "/api/v1/security/scan-input",
+        params={"text": "Hello safe world"},
+        headers={"X-API-Key": API_KEY},
+    )
     assert r.status_code == 200
     assert r.json()["clean"] is True
 
@@ -197,6 +223,7 @@ def test_scan_sql_injection(client):
     r = client.post(
         "/api/v1/security/scan-input",
         params={"text": "SELECT * FROM users WHERE 1=1; DROP TABLE users;"},
+        headers={"X-API-Key": API_KEY},
     )
     assert r.status_code == 200
     data = r.json()
@@ -206,7 +233,7 @@ def test_scan_sql_injection(client):
 
 def test_audit_config(client):
     config = {"debug": True, "secret_key": "changeme", "https_only": False}
-    r = client.post("/api/v1/security/audit-config", json=config)
+    r = client.post("/api/v1/security/audit-config", json=config, headers={"X-API-Key": ADMIN_API_KEY})
     assert r.status_code == 200
     data = r.json()
     assert data["risk_score"] > 0
@@ -298,3 +325,11 @@ def test_request_body_too_large(client):
     headers = {"Content-Length": str((10 * 1024 * 1024) + 1)}
     r = client.post("/api/v1/vision/info", content=b"x", headers=headers)
     assert r.status_code == 413
+
+
+def test_rate_limit_for_protected_endpoint_uses_api_key(client):
+    last_response = None
+    for _ in range(101):
+        last_response = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
+    assert last_response is not None
+    assert last_response.status_code == 429

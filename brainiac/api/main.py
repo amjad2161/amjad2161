@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
+from brainiac.api.auth import is_admin, parse_keys, require_api_key
 from brainiac.api.models import (
     DetectLanguageRequest,
     HealthResponse,
@@ -57,6 +58,9 @@ from brainiac.watchdog import Watchdog
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
 _MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
+_PROTECTED_PREFIXES = ("/api/v1/system/", "/api/v1/security/")
+_ADMIN_ONLY_PATHS = {"/api/v1/system/shutdown-test", "/api/v1/security/audit-config"}
+_DEFAULT_SECRETS = {"", "default", "changeme", "CHANGE-IN-PRODUCTION", "BRAINIAC-DEFAULT-CHANGE-ME"}
 
 
 def _build_modules() -> dict[str, Any]:
@@ -119,12 +123,19 @@ def _watchdog_health_map() -> dict[str, str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    secret = os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION")
+    if secret in _DEFAULT_SECRETS:
+        log.warning("brainiac.security.default_secret")
+
+    api_keys = parse_keys(os.getenv("BRAINIAC_API_KEYS"))
+    admin_keys = parse_keys(os.getenv("BRAINIAC_ADMIN_API_KEYS"))
+    if not api_keys and not admin_keys:
+        log.warning("brainiac.security.api_keys_missing")
+
     app.state.modules = _build_modules()
     app.state.module_health = _module_health()
     app.state.active_stream_tasks = set()
     app.state.shutdown_event = asyncio.Event()
-    app.state.admin_header = os.getenv("BRAINIAC_ADMIN_HEADER", "X-BRAINIAC-Admin")
-    app.state.admin_token = os.getenv("BRAINIAC_ADMIN_TOKEN", "brainiac-admin")
     app.state.watchdog = Watchdog(
         modules=app.state.modules,
         factories=_module_factories(),
@@ -209,9 +220,12 @@ def _shield() -> CyberShield:
     return _modules()["shield"]
 
 
-def _is_admin(request: Request) -> bool:
-    header_name: str = app.state.admin_header
-    return request.headers.get(header_name) == app.state.admin_token
+def _is_protected_endpoint(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _PROTECTED_PREFIXES)
+
+
+def _is_admin_endpoint(path: str) -> bool:
+    return path in _ADMIN_ONLY_PATHS
 
 
 async def _track_stream_task_start() -> asyncio.Task[Any] | None:
@@ -230,13 +244,27 @@ def _track_stream_task_end(task: asyncio.Task[Any] | None) -> None:
 async def security_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
     client_ip = request.client.host if request.client else "0.0.0.0"
+    request_path = request.url.path
     shield = _shield()
+    protected = _is_protected_endpoint(request_path)
 
     clear_contextvars()
     bind_contextvars(request_id=request_id)
-    log.info("http.request", method=request.method, path=request.url.path)
+    log.info("http.request", method=request.method, path=request_path)
 
-    if not shield.check_rate_limit(client_ip):
+    if protected:
+        try:
+            require_api_key(request, admin=_is_admin_endpoint(request_path))
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+                headers={"X-Request-Id": request_id},
+            )
+
+    rate_limit_key = request.headers.get("X-API-Key") if protected else None
+    rate_limit_identity = rate_limit_key or client_ip
+    if not shield.check_rate_limit(rate_limit_identity):
         return JSONResponse(
             status_code=429,
             content={"error": "Rate limit exceeded"},
@@ -329,10 +357,13 @@ async def watchdog_status():
 
 @app.post("/api/v1/system/shutdown-test", tags=["System"])
 async def shutdown_test(request: Request):
-    if not _is_admin(request):
-        raise HTTPException(status_code=403, detail="Admin header required")
+    require_api_key(request, admin=True)
     app.state.shutdown_event.set()
-    return {"marker": "shutdown_test_triggered", "request_id": request.headers.get("X-Request-Id")}
+    return {
+        "marker": "shutdown_test_triggered",
+        "request_id": request.headers.get("X-Request-Id"),
+        "admin": is_admin(request),
+    }
 
 
 @app.post("/api/v1/think", response_model=ThinkResponse, tags=["NEURO-CORE"])
