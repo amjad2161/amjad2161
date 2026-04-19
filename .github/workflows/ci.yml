@@ -31,7 +31,15 @@ jobs:
           pip install ruff pytest pytest-asyncio pytest-cov
 
       - name: Lint with Ruff
-        run: ruff check brainiac/ tests/ || true
+        run: |
+          ruff check \
+            brainiac/api/main.py \
+            brainiac/cli.py \
+            brainiac/core/neuro_core.py \
+            brainiac/core/sonic_matrix.py \
+            tests/test_api.py \
+            tests/test_cli.py \
+            --select E,F
 
       - name: Run tests
         env:

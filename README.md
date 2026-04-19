@@ -296,6 +296,9 @@ pip install -r requirements.txt
 # Verify all 9 modules come online
 python -m brainiac.cli status
 
+# Boot + validate runtime wiring
+python -m brainiac.cli boot
+
 # Run the end-to-end demo flow (position → route → SOS → responders)
 python -m brainiac.cli demo
 
@@ -430,6 +433,17 @@ amjad2161/
 | `GET`  | `/api/v1/creative/badge` | CREATIVE-ENGINE | Live SVG status badge |
 
 Full interactive OpenAPI documentation is auto-generated at `/docs` when the server is running.
+
+---
+
+## `> STABILIZATION NOTES`
+
+- `v2.1.1 — stabilization + completion of v2.1.0 GANE refactor`
+- Fixed dependency conflicts (`anthropic` / `langchain-anthropic`) and removed third-party `asyncio`.
+- Hardened API body security scanning for nested JSON while preserving FastAPI body re-parsing.
+- Added deterministic language detection handling for short navigation instructions.
+- Added CLI `boot` command and smoke tests.
+- Added architecture wiring summary in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 

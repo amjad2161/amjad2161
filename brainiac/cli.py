@@ -53,7 +53,7 @@ async def _cmd_status() -> int:
 
 
 async def _cmd_demo() -> int:
-    from brainiac.core import OrbitalNav, SatLink, TelemetryHub, NexusSync, CyberShield, CreativeEngine
+    from brainiac.core import CyberShield, NexusSync, OrbitalNav, SatLink, TelemetryHub
     from brainiac.core.orbital_nav import Coordinate, TransportMode
     from brainiac.core.satlink import SOSPriority
     from brainiac.core.telemetry_hub import SensorReading
@@ -67,8 +67,6 @@ async def _cmd_demo() -> int:
     telem = TelemetryHub()
     nexus = NexusSync()
     shield = CyberShield()
-    creative = CreativeEngine()
-
     print("[1/6] Acquiring RTK GPS position…")
     pos = await nav.get_position()
     print(f"      ✓ Position: {pos} (accuracy: {pos.accuracy_m}m)")
@@ -110,6 +108,16 @@ async def _cmd_demo() -> int:
     return 0
 
 
+async def _cmd_boot() -> int:
+    from brainiac.core import SatLink
+
+    code = await _cmd_status()
+    satlink = SatLink()
+    await satlink.connect()
+    print("🚀 BRAINIAC boot sequence complete.\n")
+    return code
+
+
 def _cmd_serve() -> int:
     import uvicorn
     _print_banner()
@@ -124,6 +132,7 @@ def main() -> int:
         _print_banner()
         print("Commands:")
         print("  status  — Show module status")
+        print("  boot    — Validate and boot core systems")
         print("  demo    — Run end-to-end demo flow")
         print("  serve   — Start the FastAPI server")
         return 0
@@ -131,6 +140,8 @@ def main() -> int:
     cmd = args[0]
     if cmd == "status":
         return asyncio.run(_cmd_status())
+    if cmd == "boot":
+        return asyncio.run(_cmd_boot())
     if cmd == "demo":
         return asyncio.run(_cmd_demo())
     if cmd == "serve":

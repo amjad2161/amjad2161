@@ -1,7 +1,7 @@
 """Integration tests for BRAINIAC REST API."""
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 
 @pytest.fixture
@@ -102,6 +102,30 @@ def test_ingest_normal_reading(client):
     data = r.json()
     assert data["sensor_id"] == "temp-api-01"
     assert "anomaly_detected" in data
+
+
+def test_ingest_nested_payload_is_parsed(client):
+    payload = {
+        "sensor_id": "temp-nested-01",
+        "value": 23.2,
+        "unit": "°C",
+        "quality": 0.98,
+        "metadata": {"location": {"floor": 2, "zone": "A"}},
+    }
+    r = client.post("/api/v1/telemetry/ingest", json=payload)
+    assert r.status_code == 200
+    assert r.json()["sensor_id"] == "temp-nested-01"
+
+
+def test_nested_malicious_payload_rejected(client):
+    payload = {
+        "sensor_id": "temp-api-02",
+        "value": 21.0,
+        "unit": "°C",
+        "metadata": {"notes": "<script>alert(1)</script>"},
+    }
+    r = client.post("/api/v1/telemetry/ingest", json=payload)
+    assert r.status_code == 400
 
 
 def test_telemetry_summary(client):

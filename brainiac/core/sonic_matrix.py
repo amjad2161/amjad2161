@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -93,13 +92,28 @@ class SonicMatrix:
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
         try:
-            from langdetect import detect, detect_langs
+            from langdetect import DetectorFactory, detect, detect_langs
+            DetectorFactory.seed = 0
             lang = detect(text)
             probabilities = detect_langs(text)
+            confidence = float(probabilities[0].prob) if probabilities else 0.0
+
+            # Keep short imperative navigation phrases stable for EN.
+            if (
+                lang != "en"
+                and confidence < 0.99
+                and text.isascii()
+                and any(
+                    token in text.lower()
+                    for token in ("turn ", "left", "right", "meters", "route")
+                )
+            ):
+                lang = "en"
+
             return {
                 "language": lang,
                 "language_name": LANGUAGE_MAP.get(lang, lang),
-                "confidence": float(probabilities[0].prob) if probabilities else 0.0,
+                "confidence": confidence,
                 "all_candidates": [
                     {"lang": str(p.lang), "prob": float(p.prob)} for p in probabilities
                 ],

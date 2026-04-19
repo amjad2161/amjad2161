@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import logging
+import os
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -66,9 +65,9 @@ class NeuroCore:
     """
 
     MODELS = {
-        ReasoningDepth.DEEP:     "claude-opus-4-6",
-        ReasoningDepth.STANDARD: "claude-sonnet-4-6",
-        ReasoningDepth.FAST:     "claude-haiku-4-5-20251001",
+        ReasoningDepth.DEEP:     os.getenv("BRAINIAC_MODEL_DEEP", "claude-3-5-sonnet-latest"),
+        ReasoningDepth.STANDARD: os.getenv("BRAINIAC_MODEL_STANDARD", "claude-sonnet-4-5"),
+        ReasoningDepth.FAST:     os.getenv("BRAINIAC_MODEL_FAST", "claude-3-5-haiku-latest"),
     }
 
     SYSTEM_PROMPT = (
@@ -86,7 +85,8 @@ class NeuroCore:
         cache_size: int = 1024,
         default_depth: ReasoningDepth = ReasoningDepth.STANDARD,
     ) -> None:
-        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self._client = anthropic.AsyncAnthropic(api_key=self._api_key) if self._api_key else None
         self._cache: dict[str, Thought] = {}
         self._cache_size = cache_size
         self.default_depth = default_depth
@@ -138,6 +138,9 @@ class NeuroCore:
         """Stream tokens as they are produced by the model."""
         depth = depth or self.default_depth
         model = self.MODELS[depth]
+        if self._client is None:
+            yield "NEURO-CORE unavailable: ANTHROPIC_API_KEY is not configured."
+            return
 
         async with self._client.messages.stream(
             model=model,
@@ -207,6 +210,20 @@ class NeuroCore:
         model = self.MODELS[depth]
         system = system_override or self.SYSTEM_PROMPT
         t0 = time.perf_counter()
+        if self._client is None:
+            self._total_requests += 1
+            return Thought(
+                content=(
+                    "NEURO-CORE fallback response: ANTHROPIC_API_KEY is not configured. "
+                    f"Prompt accepted ({len(prompt)} chars)."
+                ),
+                model="offline-fallback",
+                depth=depth,
+                tokens_used=0,
+                latency_ms=round((time.perf_counter() - t0) * 1000, 2),
+                confidence=0.0,
+                metadata={"error": "missing_api_key"},
+            )
 
         for attempt in range(4):
             try:

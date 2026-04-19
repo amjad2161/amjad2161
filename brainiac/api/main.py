@@ -5,7 +5,7 @@ All 9 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
-import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -14,7 +14,7 @@ from typing import AsyncIterator
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
@@ -38,6 +38,9 @@ from brainiac.api.models import (
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+_MAX_SCAN_BYTES = 64 * 1024
+_SCAN_FIELDS = 64
+_MAX_SCAN_DEPTH = 4
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -91,12 +94,50 @@ async def security_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             body_bytes = await request.body()
+            if len(body_bytes) > _MAX_SCAN_BYTES:
+                return JSONResponse(status_code=413, content={"error": "Request body too large"})
+
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
                 return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
+
+            content_type = request.headers.get("content-type", "")
+            if "application/json" in content_type and body_str:
+                payload = json.loads(body_str)
+                fields_scanned = 0
+
+                def _scan_nested(value: object, depth: int = 0) -> None:
+                    nonlocal fields_scanned
+                    if depth > _MAX_SCAN_DEPTH or fields_scanned >= _SCAN_FIELDS:
+                        return
+                    if isinstance(value, dict):
+                        for nested in value.values():
+                            if fields_scanned >= _SCAN_FIELDS:
+                                break
+                            _scan_nested(nested, depth + 1)
+                    elif isinstance(value, list):
+                        for nested in value:
+                            if fields_scanned >= _SCAN_FIELDS:
+                                break
+                            _scan_nested(nested, depth + 1)
+                    elif isinstance(value, str):
+                        fields_scanned += 1
+                        nested_threat = shield.scan_input(value, source_ip=client_ip)
+                        if nested_threat and nested_threat.threat_level.value >= 3:
+                            raise ValueError("Malicious nested content detected")
+
+                _scan_nested(payload)
+
+            async def _receive() -> dict:
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+            request = Request(request.scope, _receive)
         except Exception:
-            pass
+            return JSONResponse(
+                status_code=400,
+                content={"error": "Malformed or malicious request body"},
+            )
 
     response = await call_next(request)
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
@@ -323,7 +364,11 @@ async def supported_languages():
 
 # ── TELEMETRY-HUB ─────────────────────────────────────────────────────────────
 
-@app.post("/api/v1/telemetry/ingest", response_model=TelemetryIngestResponse, tags=["TELEMETRY-HUB"])
+@app.post(
+    "/api/v1/telemetry/ingest",
+    response_model=TelemetryIngestResponse,
+    tags=["TELEMETRY-HUB"],
+)
 async def ingest_telemetry(req: SensorReadingRequest):
     reading = SensorReading(
         sensor_id=req.sensor_id, value=req.value, unit=req.unit, quality=req.quality
