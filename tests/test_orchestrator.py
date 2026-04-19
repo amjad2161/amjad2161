@@ -1,7 +1,7 @@
 """Tests for the BRAINIAC master orchestrator."""
 import pytest
 from brainiac import (
-    Brainiac, Mission, MissionType, SystemState,
+    Brainiac, MissionType, SystemState,
     Coordinate, DeviceType, Protocol, SensorReading,
 )
 from brainiac.core.satlink import SOSPriority

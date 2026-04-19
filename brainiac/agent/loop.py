@@ -15,7 +15,7 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import anthropic
 import structlog
@@ -86,7 +86,7 @@ class AgentLoop:
         t0 = time.perf_counter()
 
         prompt_with_context = await self._inject_memory(prompt)
-        messages: list[dict] = [{"role": "user", "content": prompt_with_context}]
+        messages: list[dict[str, Any]] = [{"role": "user", "content": prompt_with_context}]
         tool_schemas = self.tools.get_schema()
         decisions: list[Decision] = []
 
@@ -109,8 +109,8 @@ class AgentLoop:
                         "text": self.config.system_prompt,
                         "cache_control": {"type": "ephemeral"},
                     }],
-                    tools=tool_schemas if tool_schemas else anthropic.NOT_GIVEN,
-                    messages=messages,
+                    tools=cast(Any, tool_schemas if tool_schemas else anthropic.NOT_GIVEN),
+                    messages=cast(Any, messages),
                 )
             except anthropic.APIError as exc:
                 return await self._save_episode(
@@ -145,7 +145,11 @@ class AgentLoop:
             model=self.config.model,
             max_tokens=self.config.max_tokens,
             temperature=self.config.temperature,
-            system=self.config.system_prompt,
+            system=[{
+                "type": "text",
+                "text": self.config.system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }],
             messages=[{"role": "user", "content": prompt_with_context}],
         ) as stream:
             async for text in stream.text_stream:

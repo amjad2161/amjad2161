@@ -1,7 +1,7 @@
 """Integration tests for BRAINIAC REST API."""
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 
 @pytest.fixture
@@ -263,6 +263,15 @@ def test_nav_viewer_served(client):
 
 
 # ── Security Middleware ───────────────────────────────────────────────────────
+
+def test_json_scan_middleware_does_not_consume_body(client):
+    """JSON-body scan middleware must preserve body for downstream request.json()."""
+    r = client.post("/api/v1/agent/route-preview", json={"prompt": "plan a safe route"})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["agent"] in {"navigation", "telemetry", "medical"}
+    assert data["reason"]
+
 
 # ── Medical Protocol Endpoints ────────────────────────────────────────────────
 

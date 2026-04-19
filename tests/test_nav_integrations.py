@@ -104,7 +104,6 @@ async def test_medical_evacuation_routing():
     assert result["protocol"] is not None
     assert result["route"]["adjusted_eta_s"] > 0
     # Critical patient gets NO traffic penalty (priority corridor): adjusted == raw
-    raw_eta_s = result["route"]["eta_minutes"] * 60
     assert result["route"]["adjusted_eta_s"] == pytest.approx(
         result["route"]["eta_minutes"] * 60 / 1.0, rel=0.1,
     )

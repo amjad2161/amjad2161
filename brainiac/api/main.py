@@ -15,7 +15,7 @@ from typing import AsyncIterator
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+from fastapi.responses import JSONResponse, Response, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from sse_starlette.sse import EventSourceResponse
@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="BRAINIAC AI",
     description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.0.0",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -162,7 +162,7 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.0.0"}
+    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "2.1.0"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
@@ -225,7 +225,7 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Internal processing error")
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -252,7 +252,7 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail="Internal processing error")
+        raise HTTPException(status_code=500, detail="Internal processing error") from exc
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -627,7 +627,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid device registration parameters")
+        raise HTTPException(status_code=400, detail="Invalid device registration parameters") from exc
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])

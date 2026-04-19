@@ -27,7 +27,7 @@ from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading, Anomaly
-from brainiac.core.nexus_sync import DeviceType, Protocol, Message
+from brainiac.core.nexus_sync import DeviceType, Message
 
 log = structlog.get_logger("brainiac.orchestrator")
 
@@ -238,12 +238,15 @@ class Brainiac:
         return mission
 
     async def execute_mission(self, mission: Mission) -> Mission:
-        """Execute a planned mission end-to-end."""
+        """Execute a planned mission end-to-end.
+
+        TODO: Replace simulated phase timing with real mission telemetry/events.
+        """
         mission.status = "RUNNING"
         mission.started_at = time.time()
         mission.events.append({"ts": time.time(), "event": "MISSION_STARTED"})
 
-        # Simulate execution phases
+        # Simulated phase progression placeholder until real mission bus integration is wired.
         for phase in ["TAKEOFF", "CRUISE", "APPROACH", "TARGET_REACHED", "RETURN", "LANDED"]:
             await asyncio.sleep(0.01)   # simulate phase
             mission.events.append({"ts": time.time(), "event": phase})

@@ -195,8 +195,6 @@ class INS:
         dt = max(0.001, min(dt, 1.0))
         self._last_imu_ts = reading.timestamp
 
-        corrected_gx = reading.gyro_x - self._gyro_bias_x
-        corrected_gy = reading.gyro_y - self._gyro_bias_y
         corrected_gz = reading.gyro_z - self._gyro_bias_z
 
         self._heading += math.degrees(corrected_gz * dt)

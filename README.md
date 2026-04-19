@@ -293,7 +293,7 @@ git clone https://github.com/amjad2161/amjad2161.git
 cd amjad2161
 pip install -r requirements.txt
 
-# Verify all 9 modules come online
+# Verify all 12 modules come online
 python -m brainiac.cli status
 
 # Run the end-to-end demo flow (position → route → SOS → responders)
@@ -327,7 +327,7 @@ docker compose up
 ```
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BRAINIAC AI — AUTONOMOUS SUPER INTELLIGENCE              ║
-║                        v1.0.0 GENESIS                            ║
+║                      v2.1.0 — G.A.N.E                            ║
 ╚══════════════════════════════════════════════════════════════════╝
 
 [1/6] Acquiring RTK GPS position…
@@ -400,7 +400,7 @@ amjad2161/
 
 | Method | Endpoint | Module | Description |
 |--------|----------|--------|-------------|
-| `GET`  | `/health` | System | Live health of all 9 modules |
+| `GET`  | `/health` | System | Live health of all 12 modules |
 | `GET`  | `/diagnostics` | System | Detailed diagnostic payload per module |
 | `GET`  | `/metrics` | System | Prometheus metrics |
 | `POST` | `/api/v1/think` | NEURO-CORE | Submit reasoning task (depth: fast/standard/deep) |

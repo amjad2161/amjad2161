@@ -13,7 +13,6 @@ DISCLAIMER: All outputs must be verified by a licensed medical professional.
 """
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -304,7 +303,7 @@ class MedicalProtocols:
             "calculated_mg": round(calculated, 2),
             "actual_dose_mg": round(actual, 2),
             "max_dose_mg": drug.max_dose_mg,
-            "clamped": calculated > drug.max_dose_mg > 0,
+            "clamped": calculated > drug.max_dose_mg and drug.max_dose_mg > 0,
             "route": selected_route.value,
             "available_routes": [r.value for r in drug.routes],
             "frequency": drug.frequency,

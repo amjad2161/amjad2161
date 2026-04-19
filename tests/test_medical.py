@@ -3,7 +3,7 @@ import pytest
 
 from brainiac.core.medical_protocols import (
     MedicalProtocols, ProtocolCategory, Urgency, DrugRoute,
-    DRUG_DATABASE, PROTOCOL_LIBRARY,
+    PROTOCOL_LIBRARY,
 )
 
 

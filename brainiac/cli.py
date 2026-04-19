@@ -54,7 +54,7 @@ async def _cmd_status() -> int:
     print("│ MODULE            │ STATUS     │")
     print("├───────────────────┼────────────┤")
     for name, mod in modules.items():
-        diag = mod.diagnostics()
+        diag = mod.diagnostics()  # type: ignore[attr-defined]
         status = diag.get("status", "ONLINE" if diag else "UNKNOWN")
         print(f"│ {name} │ {status:<10} │")
     print("└───────────────────┴────────────┘")

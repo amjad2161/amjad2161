@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import time
 from dataclasses import dataclass
 from enum import Enum

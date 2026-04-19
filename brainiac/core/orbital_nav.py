@@ -725,9 +725,13 @@ class OrbitalNav:
         Returns a list of {distance_m, bearing_change, instruction, lat, lon} dicts.
         Supports en/he/ar with RTL awareness.
         """
-        from brainiac.core.localization import Localization
+        from brainiac.core.localization import Localization, Language
 
-        loc = Localization(lang=lang)
+        try:
+            lang_enum = Language(lang)
+        except ValueError:
+            lang_enum = Language.EN
+        loc = Localization(lang=lang_enum)
         instructions: list[dict[str, Any]] = []
 
         if not route.waypoints:

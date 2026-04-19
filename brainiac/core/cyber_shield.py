@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import re
 import time
@@ -346,7 +345,7 @@ class CyberShield:
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
-        by_level = {}
+        by_level: dict[str, int] = {}
         for e in self._events:
             by_level[e.threat_level.name] = by_level.get(e.threat_level.name, 0) + 1
         return {

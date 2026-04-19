@@ -1,5 +1,4 @@
 """Tests for the RTL-aware Localization module."""
-import pytest
 
 from brainiac.core.localization import (
     Localization, Language, Direction, _classify_bearing_change,

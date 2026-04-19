@@ -4,7 +4,6 @@ without an API key and without network access.
 """
 from __future__ import annotations
 
-import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -123,7 +122,6 @@ def test_diagnostics_reports_models(patched_core):
 
 
 def test_cache_key_stability():
-    core = NeuroCore.__new__(NeuroCore)
     k1 = NeuroCore._cache_key("same prompt", ReasoningDepth.STANDARD)
     k2 = NeuroCore._cache_key("same prompt", ReasoningDepth.STANDARD)
     k3 = NeuroCore._cache_key("same prompt", ReasoningDepth.DEEP)

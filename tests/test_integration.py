@@ -1,7 +1,7 @@
 """Integration tests — verify all G.A.N.E modules work together end-to-end."""
 import pytest
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
+    OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
     Localization, MedicalProtocols,
 )
@@ -120,7 +120,9 @@ async def test_navigation_integrated_with_shield():
 async def test_sonic_translates_nav_instructions():
     """Navigation instructions can be translated via SONIC-MATRIX."""
     sonic = SonicMatrix()
-    detected = sonic.detect_language("Turn left in 200 meters")
+    detected = sonic.detect_language(
+        "In two hundred meters, turn left and continue straight toward the hospital entrance."
+    )
     assert detected["language"] == "en"
 
 

@@ -1,7 +1,5 @@
 """Tests for ORBITAL-NAV module."""
-import math
 import pytest
-import pytest_asyncio
 from brainiac.core.orbital_nav import (
     Coordinate, OrbitalNav, TransportMode, PrecisionMode, Route
 )
@@ -102,7 +100,6 @@ def test_diagnostics(nav):
 
 @pytest.mark.asyncio
 async def test_two_opt_refinement_does_not_worsen():
-    nav = OrbitalNav()
     origin = Coordinate(lat=32.0, lon=34.0)
     stops = [
         Coordinate(lat=32.5, lon=34.5),
@@ -443,7 +440,7 @@ def test_gnss_catalog_has_operator_and_bands():
     """GNSS catalog must expose operator + signal bands for each constellation."""
     catalog = OrbitalNav.gnss_catalog()
     assert len(catalog) == 6
-    for name, meta in catalog.items():
+    for _name, meta in catalog.items():
         assert "operator" in meta
         assert "active_sats" in meta
         assert isinstance(meta["bands"], list)

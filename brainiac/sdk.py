@@ -15,7 +15,7 @@ Example
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from contextlib import suppress
 
 import httpx
 
@@ -271,7 +271,7 @@ class BrainiacClient:
         hour: int | None = None, weekday: int = 0,
         weather_factor: float = 1.0,
     ) -> dict:
-        params = {
+        params: dict[str, str | int | float | bool | None] = {
             "origin_lat": origin_lat, "origin_lon": origin_lon,
             "dest_lat": dest_lat, "dest_lon": dest_lon,
             "mode": mode, "weekday": weekday, "weather_factor": weather_factor,
@@ -318,7 +318,7 @@ class BrainiacClient:
         return r.json()
 
     async def medical_dose(self, drug: str, weight_kg: float, route: str | None = None) -> dict:
-        params = {"drug": drug, "weight_kg": weight_kg}
+        params: dict[str, str | int | float | bool | None] = {"drug": drug, "weight_kg": weight_kg}
         if route:
             params["route"] = route
         r = await self._client.post("/api/v1/medical/dose", params=params)
@@ -443,13 +443,18 @@ class BrainiacSync:
         return self._run(self._client.sos(lat, lon, message, priority))
 
     def close(self) -> None:
+        if self._loop.is_closed():
+            return
         self._run(self._client.close())
         self._loop.close()
 
     def __del__(self) -> None:
-        try:
-            if not self._loop.is_closed():
-                self._run(self._client.close())
-                self._loop.close()
-        except Exception:
-            pass
+        loop = getattr(self, "_loop", None)
+        client = getattr(self, "_client", None)
+        if loop is None or client is None or loop.is_closed():
+            return
+        if loop.is_running():
+            return
+        with suppress(RuntimeError, Exception):
+            self._run(client.close())
+            loop.close()

@@ -7,7 +7,6 @@ medical devices, drones — via MQTT, WebSocket, REST, gRPC, OPC-UA.
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -241,7 +240,7 @@ class NexusSync:
 
     def diagnostics(self) -> dict[str, Any]:
         connected = sum(1 for d in self._devices.values() if d.connected)
-        type_counts = {}
+        type_counts: dict[str, int] = {}
         for d in self._devices.values():
             type_counts[d.device_type.value] = type_counts.get(d.device_type.value, 0) + 1
         return {

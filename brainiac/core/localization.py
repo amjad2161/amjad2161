@@ -188,7 +188,7 @@ class Localization:
             "capabilities": ["turn_by_turn_i18n", "rtl_he_ar", "distance_unit_rendering"],
             "lang": self.lang.value,
             "is_rtl": self.is_rtl,
-            "supported_languages": [l.value for l in Language],
+            "supported_languages": [language.value for language in Language],
         }
 
 

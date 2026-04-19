@@ -8,13 +8,19 @@ Run with:  python scripts/benchmark.py
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import statistics
+import sys
 import time
 from typing import Callable, Awaitable
 
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from brainiac.core import (
     OrbitalNav, SatLink, TelemetryHub, NexusSync,
-    CyberShield, CreativeEngine, SonicMatrix,
+    CyberShield, CreativeEngine,
 )
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority

@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
 import anthropic
 import structlog
@@ -229,8 +227,16 @@ class NeuroCore:
                 self._total_tokens += tokens
                 self._total_requests += 1
 
+                first_text = next(
+                    (
+                        str(cast(Any, block).text)
+                        for block in response.content
+                        if hasattr(cast(Any, block), "text")
+                    ),
+                    "",
+                )
                 thought = Thought(
-                    content=response.content[0].text,
+                    content=first_text,
                     model=model,
                     depth=depth,
                     tokens_used=tokens,

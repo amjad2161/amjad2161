@@ -1,11 +1,9 @@
 """Tests for the INS (Inertial Navigation System) module."""
-import math
 import time
 import pytest
 
 from brainiac.core.ins import (
-    INS, IMUReading, INSPosition, GNSSHealth,
-    PositionSource, INSState,
+    INS, IMUReading, INSPosition, PositionSource, INSState,
 )
 
 
@@ -107,7 +105,6 @@ def test_imu_alignment_phase(ins):
 
 def test_imu_updates_position(seeded_ins):
     """IMU readings should move the dead-reckoning position."""
-    initial = seeded_ins.position()
     ts = time.time()
     for i in range(20):
         seeded_ins.update_imu(IMUReading(
