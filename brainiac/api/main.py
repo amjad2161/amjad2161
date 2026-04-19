@@ -5,39 +5,55 @@ All 9 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
-import asyncio
+import json
 import os
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
+from brainiac.api.models import (
+    DetectLanguageRequest,
+    HealthResponse,
+    ImagePromptRequest,
+    PublishRequest,
+    RegisterDeviceRequest,
+    RouteRequest,
+    RouteResponse,
+    SensorReadingRequest,
+    SOSRequest,
+    SOSResponse,
+    TelemetryIngestResponse,
+    ThinkRequest,
+    ThinkResponse,
+    TranslateRequest,
+    TTSRequest,
+)
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    CreativeEngine,
+    CyberShield,
+    NeuroCore,
+    NexusSync,
+    OmniVision,
+    OrbitalNav,
+    SatLink,
+    SonicMatrix,
+    TelemetryHub,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
-from brainiac.api.models import (
-    ThinkRequest, ThinkResponse,
-    RouteRequest, RouteResponse,
-    SOSRequest, SOSResponse,
-    SensorReadingRequest, TelemetryIngestResponse,
-    TranslateRequest, DetectLanguageRequest, TTSRequest,
-    ImagePromptRequest,
-    RegisterDeviceRequest, PublishRequest,
-    HealthResponse,
-)
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+_SCAN_WINDOW_BYTES = 256 * 1024
+_SCAN_FIELDS = ("text", "message", "prompt", "query", "payload", "input")
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -46,9 +62,13 @@ sonic   = SonicMatrix()
 satlink = SatLink()
 nexus   = NexusSync()
 telem   = TelemetryHub()
-shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
+_SECRET_ENV_VALUE = os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION")
+shield  = CyberShield(secret_key=_SECRET_ENV_VALUE)
 creative= CreativeEngine()
 vision  = OmniVision()
+
+if _SECRET_ENV_VALUE == "CHANGE-IN-PRODUCTION":
+    log.warning("brainiac.security.default_secret_in_use")
 
 
 @asynccontextmanager
@@ -91,8 +111,22 @@ async def security_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             body_bytes = await request.body()
-            body_str = body_bytes.decode("utf-8", errors="ignore")
-            threat = shield.scan_input(body_str, source_ip=client_ip)
+            body_str = body_bytes[:_SCAN_WINDOW_BYTES].decode("utf-8", errors="ignore")
+            text_to_scan = body_str
+            if request.headers.get("content-type", "").startswith("application/json"):
+                try:
+                    payload = json.loads(body_str)
+                    if isinstance(payload, dict):
+                        collected = []
+                        for key in _SCAN_FIELDS:
+                            value = payload.get(key)
+                            if isinstance(value, str):
+                                collected.append(value)
+                        if collected:
+                            text_to_scan = " ".join(collected)
+                except json.JSONDecodeError:
+                    pass
+            threat = shield.scan_input(text_to_scan, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
                 return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
         except Exception:
@@ -168,7 +202,7 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -195,7 +229,7 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -388,7 +422,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])

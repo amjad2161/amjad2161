@@ -1,8 +1,7 @@
 """Tests for TELEMETRY-HUB module."""
-import asyncio
-import time
 import pytest
-from brainiac.core.telemetry_hub import TelemetryHub, SensorReading, AnomalyType
+
+from brainiac.core.telemetry_hub import AnomalyType, SensorReading, TelemetryHub
 
 
 @pytest.fixture
@@ -33,7 +32,7 @@ async def test_anomaly_detection_spike(hub):
 
 @pytest.mark.asyncio
 async def test_anomaly_detection_drop(hub):
-    for i in range(15):
+    for _ in range(15):
         await hub.ingest(SensorReading(sensor_id="s2", value=100.0, unit="Pa"))
 
     anomaly = await hub.ingest(SensorReading(sensor_id="s2", value=-999.0, unit="Pa"))

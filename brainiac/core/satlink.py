@@ -13,7 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 
@@ -93,7 +93,7 @@ class SatLink:
     - Incident report generation
     """
 
-    SOS_CHANNELS = [
+    SOS_CHANNELS: ClassVar[list[BroadcastChannel]] = [
         BroadcastChannel.LEO_SATELLITE,
         BroadcastChannel.FIVE_G_LTE,
         BroadcastChannel.LORA_MESH,

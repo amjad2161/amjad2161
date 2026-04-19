@@ -102,6 +102,13 @@ class BRAINIAC:
 
 ---
 
+## `> GANE AGENT LAYER & INS`
+
+- **GANE Agent Layer**: Tool-oriented orchestration interfaces are exposed through the BRAINIAC API/SDK surface for mission workflows and autonomy control.
+- **INS (Inertial Navigation)**: Current navigation focuses on GNSS + route intelligence; INS-grade sensor fusion is tracked as a dedicated subsystem to complement GNSS-denied scenarios.
+
+---
+
 ## `> NAVIGATION SUPREMACY`
 
 <div align="center">

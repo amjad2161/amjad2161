@@ -1,6 +1,7 @@
 """Tests for CREATIVE-ENGINE module."""
 import pytest
-from brainiac.core.creative_engine import CreativeEngine, Style, MediaType
+
+from brainiac.core.creative_engine import CreativeEngine, MediaType, Style
 
 
 @pytest.fixture

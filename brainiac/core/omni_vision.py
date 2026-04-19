@@ -119,13 +119,13 @@ class OmniVision:
     def extract_dominant_colors(self, image_bytes: bytes, n: int = 5) -> list[str]:
         """Return top-N dominant colors as hex strings."""
         try:
-            import numpy as np
             from PIL import Image
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((100, 100))
-            pixels = np.array(img).reshape(-1, 3)
             # Simple k-means would be ideal; here we use quantization
             quantized = img.quantize(colors=n)
             palette = quantized.getpalette()
+            if not palette:
+                return []
             colors = []
             for i in range(n):
                 r, g, b = palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]
@@ -164,7 +164,7 @@ class OmniVision:
 
         return SceneAnalysis(
             description=(
-                f"Image {info.get('width', '?')}×{info.get('height', '?')} "
+                f"Image {info.get('width', '?')}x{info.get('height', '?')} "
                 f"{info.get('format', 'unknown')} — awaiting YOLO model for object detection"
             ),
             objects=[],                    # Populate when YOLO model is loaded

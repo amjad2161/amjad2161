@@ -1,5 +1,6 @@
 """Tests for CYBER-SHIELD module."""
 import pytest
+
 from brainiac.core.cyber_shield import CyberShield, ThreatLevel, ThreatType
 
 
@@ -74,6 +75,16 @@ def test_verify_empty_file_hash(shield):
     result = shield.verify_file(b"")
     # Empty file hash IS in the known-bad list
     assert result["malware_detected"] is True
+
+
+def test_detect_gps_spoofing_bounds(shield):
+    assert shield.detect_gps_spoofing([]) is False
+    assert shield.detect_gps_spoofing(["bad", 12]) is False
+
+
+def test_detect_gps_spoofing_signal_pattern(shield):
+    assert shield.detect_gps_spoofing([6.0, 7.2, 8.1, 7.8]) is True
+    assert shield.detect_gps_spoofing([32.1, 28.3, 30.7, 29.8]) is False
 
 
 # ── HMAC ──────────────────────────────────────────────────────────────────────

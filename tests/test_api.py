@@ -1,7 +1,9 @@
 """Integration tests for BRAINIAC REST API."""
+import importlib
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture
@@ -31,6 +33,17 @@ def test_health(client):
     for mod_status in data["modules"].values():
         assert mod_status == "ONLINE"
     assert data["uptime_s"] >= 0
+
+
+def test_health_without_anthropic_api_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
+        import brainiac.api.main as main_module
+        main_module = importlib.reload(main_module)
+        local_client = TestClient(main_module.app, raise_server_exceptions=False)
+        r = local_client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["status"] == "ONLINE"
 
 
 def test_diagnostics(client):
@@ -202,3 +215,13 @@ def test_security_headers(client):
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+
+
+def test_malformed_large_json_body_is_handled(client):
+    bad_json = '{"sensor_id": "x", "value": 1' + (" " * (260 * 1024))
+    r = client.post(
+        "/api/v1/telemetry/ingest",
+        data=bad_json,
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code != 500

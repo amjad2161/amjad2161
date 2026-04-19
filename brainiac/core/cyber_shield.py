@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import re
 import time
@@ -70,7 +69,7 @@ class NetworkAuditResult:
 # Simplified known-bad pattern database (production: MISP / VirusTotal / etc.)
 KNOWN_MALWARE_HASHES: set[str] = {
     "d41d8cd98f00b204e9800998ecf8427e",    # empty file md5
-    "e3b0c44298fc1c149afbf4c8996fb924",    # empty file sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",  # empty file sha256
 }
 
 INJECTION_PATTERNS = [
@@ -140,7 +139,7 @@ class CyberShield:
     ) -> bool:
         """
         Returns True if the IP is within limits, False if rate-limited.
-        Automatically blocks IPs that exceed 10× the limit.
+        Automatically blocks IPs that exceed 10x the limit.
         """
         if source_ip in self._blocked_ips:
             return False
@@ -182,6 +181,23 @@ class CyberShield:
                 {"md5": md5, "sha256": sha256},
             )
         return {"md5": md5, "sha256": sha256, "malware_detected": is_malware}
+
+    def detect_gps_spoofing(self, snr_values: list[Any]) -> bool:
+        """
+        Return True when SNR telemetry indicates possible spoofing.
+
+        Invalid payloads (empty/non-numeric values) are treated as no-detection.
+        """
+        if not snr_values:
+            return False
+        if not all(isinstance(v, int | float) for v in snr_values):
+            return False
+
+        mean_snr = sum(float(v) for v in snr_values) / len(snr_values)
+        variance = sum((float(v) - mean_snr) ** 2 for v in snr_values) / len(snr_values)
+        low_signal = mean_snr < 15.0
+        unnaturally_flat = variance < 0.5 and len(snr_values) >= 4
+        return low_signal or unnaturally_flat
 
     # ── Message Integrity (HMAC) ──────────────────────────────────────────────
 
@@ -274,7 +290,7 @@ class CyberShield:
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
-        by_level = {}
+        by_level: dict[str, int] = {}
         for e in self._events:
             by_level[e.threat_level.name] = by_level.get(e.threat_level.name, 0) + 1
         return {

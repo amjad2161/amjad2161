@@ -11,7 +11,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import structlog
@@ -48,7 +48,7 @@ class Coordinate:
     def __str__(self) -> str:
         return f"({self.lat:.6f}, {self.lon:.6f}, alt={self.alt_m:.1f}m)"
 
-    def distance_to(self, other: "Coordinate") -> float:
+    def distance_to(self, other: Coordinate) -> float:
         """Haversine distance in metres."""
         phi1, phi2 = math.radians(self.lat), math.radians(other.lat)
         dphi = math.radians(other.lat - self.lat)
@@ -56,7 +56,7 @@ class Coordinate:
         a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
         return EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    def bearing_to(self, other: "Coordinate") -> float:
+    def bearing_to(self, other: Coordinate) -> float:
         """Initial bearing in degrees (0=N, 90=E, 180=S, 270=W)."""
         phi1, phi2 = math.radians(self.lat), math.radians(other.lat)
         dlam = math.radians(other.lon - self.lon)
@@ -134,7 +134,7 @@ class OrbitalNav:
     - Drone / spacecraft routing extensions
     """
 
-    GNSS_SYSTEMS = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"]
+    GNSS_SYSTEMS: ClassVar[list[str]] = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"]
 
     def __init__(
         self,

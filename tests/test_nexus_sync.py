@@ -1,7 +1,7 @@
 """Tests for NEXUS-SYNC module."""
-import asyncio
 import pytest
-from brainiac.core.nexus_sync import NexusSync, DeviceType, Protocol, Message
+
+from brainiac.core.nexus_sync import DeviceType, Message, NexusSync, Protocol
 
 
 @pytest.fixture

@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from typing import Protocol as TypingProtocol
+
+
+class _DiagnosticModule(TypingProtocol):
+    def diagnostics(self) -> dict[str, str]: ...
 
 
 def _print_banner() -> None:
@@ -23,13 +28,20 @@ def _print_banner() -> None:
 
 async def _cmd_status() -> int:
     from brainiac.core import (
-        NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-        NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+        CreativeEngine,
+        CyberShield,
+        NeuroCore,
+        NexusSync,
+        OmniVision,
+        OrbitalNav,
+        SatLink,
+        SonicMatrix,
+        TelemetryHub,
     )
     _print_banner()
     print("▶ Initialising all 9 core modules...\n")
 
-    modules = {
+    modules: dict[str, _DiagnosticModule] = {
         "NEURO-CORE      ": NeuroCore(),
         "ORBITAL-NAV     ": OrbitalNav(),
         "SONIC-MATRIX    ": SonicMatrix(),
@@ -53,11 +65,17 @@ async def _cmd_status() -> int:
 
 
 async def _cmd_demo() -> int:
-    from brainiac.core import OrbitalNav, SatLink, TelemetryHub, NexusSync, CyberShield, CreativeEngine
+    from brainiac.core import (
+        CyberShield,
+        NexusSync,
+        OrbitalNav,
+        SatLink,
+        TelemetryHub,
+    )
+    from brainiac.core.nexus_sync import DeviceType, Protocol
     from brainiac.core.orbital_nav import Coordinate, TransportMode
     from brainiac.core.satlink import SOSPriority
     from brainiac.core.telemetry_hub import SensorReading
-    from brainiac.core.nexus_sync import DeviceType, Protocol
 
     _print_banner()
     print("▶ Running end-to-end demo flow...\n")
@@ -67,7 +85,6 @@ async def _cmd_demo() -> int:
     telem = TelemetryHub()
     nexus = NexusSync()
     shield = CyberShield()
-    creative = CreativeEngine()
 
     print("[1/6] Acquiring RTK GPS position…")
     pos = await nav.get_position()
@@ -93,7 +110,10 @@ async def _cmd_demo() -> int:
     for _ in range(10):
         await telem.ingest(SensorReading(sensor_id="heart-rate", value=72, unit="bpm"))
     anomaly = await telem.ingest(SensorReading(sensor_id="heart-rate", value=220, unit="bpm"))
-    print(f"      ✓ Anomaly detected: {anomaly.anomaly_type.value} (severity {anomaly.severity})")
+    if anomaly is not None:
+        print(f"      ✓ Anomaly detected: {anomaly.anomaly_type.value} (severity {anomaly.severity})")
+    else:
+        print("      ✓ No anomaly detected")
 
     print("[6/6] Broadcasting SOS over all channels…")
     packet = await satlink.send_sos(

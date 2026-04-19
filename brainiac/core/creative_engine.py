@@ -7,7 +7,6 @@ audio composition, and real-time rendering pipeline hooks.
 from __future__ import annotations
 
 import base64
-import io
 import time
 from dataclasses import dataclass, field
 from enum import Enum

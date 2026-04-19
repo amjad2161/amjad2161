@@ -1,7 +1,7 @@
 """Tests for SATLINK-X module."""
-import time
 import pytest
-from brainiac.core.satlink import SatLink, SOSPriority, BroadcastChannel
+
+from brainiac.core.satlink import BroadcastChannel, SatLink, SOSPriority
 
 
 @pytest.fixture

@@ -1,6 +1,7 @@
 """Tests for SONIC-MATRIX module."""
 import pytest
-from brainiac.core.sonic_matrix import SonicMatrix, LANGUAGE_MAP
+
+from brainiac.core.sonic_matrix import SonicMatrix
 
 langdetect = pytest.importorskip("langdetect", reason="langdetect not installed in env")
 
@@ -26,7 +27,7 @@ def test_supported_languages(sonic):
     langs = sonic.supported_languages()
     assert isinstance(langs, list)
     assert len(langs) >= 20
-    codes = [l["code"] for l in langs]
+    codes = [lang_entry["code"] for lang_entry in langs]
     assert "en" in codes
     assert "he" in codes
     assert "ar" in codes

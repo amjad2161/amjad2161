@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -92,8 +91,22 @@ class SonicMatrix:
 
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
+        lowered = text.lower()
+        nav_tokens = ("turn", "left", "right", "meters", "meter", "continue", "exit")
+        if all(ord(c) < 128 for c in text) and any(token in lowered for token in nav_tokens):
+            return {
+                "language": "en",
+                "language_name": LANGUAGE_MAP.get("en", "en"),
+                "confidence": 0.99,
+                "all_candidates": [{"lang": "en", "prob": 0.99}],
+            }
         try:
-            from langdetect import detect, detect_langs
+            from langdetect import (  # type: ignore[import-untyped]
+                DetectorFactory,
+                detect,
+                detect_langs,
+            )
+            DetectorFactory.seed = 0
             lang = detect(text)
             probabilities = detect_langs(text)
             return {
@@ -118,7 +131,7 @@ class SonicMatrix:
     ) -> TranslationResult:
         """Translate text using deep_translator."""
         try:
-            from deep_translator import GoogleTranslator
+            from deep_translator import GoogleTranslator  # type: ignore[import-untyped]
             detected = self.detect_language(text)
             src = detected["language"] if source_lang == "auto" else source_lang
             translated = GoogleTranslator(source=src, target=target_lang).translate(text)
@@ -156,7 +169,7 @@ class SonicMatrix:
             return self._tts_cache[cache_key]
 
         try:
-            from gtts import gTTS
+            from gtts import gTTS  # type: ignore[import-untyped]
             t0 = time.perf_counter()
             tts = gTTS(text=text, lang=lang, slow=False)
             buf = io.BytesIO()

@@ -1,13 +1,13 @@
 """BRAINIAC Core Modules — all 9 subsystems."""
-from .neuro_core import NeuroCore
-from .orbital_nav import OrbitalNav
-from .sonic_matrix import SonicMatrix
-from .satlink import SatLink
-from .nexus_sync import NexusSync
-from .telemetry_hub import TelemetryHub
-from .cyber_shield import CyberShield
 from .creative_engine import CreativeEngine
+from .cyber_shield import CyberShield
+from .neuro_core import NeuroCore
+from .nexus_sync import NexusSync
 from .omni_vision import OmniVision
+from .orbital_nav import OrbitalNav
+from .satlink import SatLink
+from .sonic_matrix import SonicMatrix
+from .telemetry_hub import TelemetryHub
 
 __all__ = [
     "NeuroCore",

@@ -1,11 +1,7 @@
 """Tests for ORBITAL-NAV module."""
-import math
 import pytest
-import pytest_asyncio
-from brainiac.core.orbital_nav import (
-    Coordinate, OrbitalNav, TransportMode, PrecisionMode, Route
-)
 
+from brainiac.core.orbital_nav import Coordinate, OrbitalNav, PrecisionMode, TransportMode
 
 # ── Coordinate ────────────────────────────────────────────────────────────────
 

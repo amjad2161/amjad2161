@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any, ClassVar
 
 import anthropic
 import structlog
@@ -65,7 +64,7 @@ class NeuroCore:
     - Automatic retry with exponential back-off
     """
 
-    MODELS = {
+    MODELS: ClassVar[dict[ReasoningDepth, str]] = {
         ReasoningDepth.DEEP:     "claude-opus-4-6",
         ReasoningDepth.STANDARD: "claude-sonnet-4-6",
         ReasoningDepth.FAST:     "claude-haiku-4-5-20251001",
@@ -226,9 +225,11 @@ class NeuroCore:
                 tokens = response.usage.input_tokens + response.usage.output_tokens
                 self._total_tokens += tokens
                 self._total_requests += 1
+                first_content = response.content[0] if response.content else None
+                content_text = getattr(first_content, "text", "")
 
                 thought = Thought(
-                    content=response.content[0].text,
+                    content=content_text,
                     model=model,
                     depth=depth,
                     tokens_used=tokens,

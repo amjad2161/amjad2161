@@ -1,13 +1,19 @@
 """Integration tests — verify all BRAINIAC modules work together."""
 import pytest
+
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    CreativeEngine,
+    CyberShield,
+    NexusSync,
+    OmniVision,
+    OrbitalNav,
+    SatLink,
+    SonicMatrix,
+    TelemetryHub,
 )
-from brainiac.core.orbital_nav import Coordinate, TransportMode
+from brainiac.core.nexus_sync import DeviceType, Protocol
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
-from brainiac.core.nexus_sync import DeviceType, Protocol
 
 
 @pytest.mark.asyncio
