@@ -1,10 +1,13 @@
-name: BRAINIAC CI
+name: G.A.N.E CI
 
 on:
   push:
     branches: [ main, "claude/**" ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:

@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# BRAINIAC AI — Production Dockerfile
+# G.A.N.E — Production Dockerfile
 # Multi-stage build for minimal, secure runtime image
 # ═══════════════════════════════════════════════════════════════════════════════
 

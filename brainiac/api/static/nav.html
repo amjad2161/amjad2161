@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<title>G.A.N.E NAV — Live Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin="" />
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --panel: #11172a;
+    --fg: #e8eefc;
+    --accent: #00f5ff;
+    --accent-2: #ff6ec7;
+    --border: #22304a;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--fg); }
+  #layout { display: grid; grid-template-columns: 320px 1fr; height: 100vh; }
+  #side { background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+  #map  { height: 100%; }
+  h1 { font-size: 16px; letter-spacing: 0.12em; color: var(--accent); margin: 0 0 12px 0; text-transform: uppercase; }
+  h2 { font-size: 12px; letter-spacing: 0.1em; color: var(--accent-2); margin: 18px 0 6px 0; text-transform: uppercase; }
+  label { display: block; font-size: 11px; color: #8fa0c7; margin: 8px 0 2px; text-transform: uppercase; letter-spacing: 0.1em; }
+  input, select, button { width: 100%; padding: 8px 10px; margin: 2px 0; background: #070c18; color: var(--fg); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; box-sizing: border-box; }
+  button { background: var(--accent); color: #0a0e1a; font-weight: 600; cursor: pointer; border: none; margin-top: 10px; }
+  button:hover { background: #00d6dd; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .stat { font-size: 12px; color: #8fa0c7; margin-top: 4px; }
+  .stat b { color: var(--fg); font-weight: 600; }
+  #instructions { margin-top: 8px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+  #instructions .ins { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.4; }
+  #instructions .ins:last-child { border-bottom: none; }
+  #instructions .dist { color: var(--accent); font-weight: 600; }
+  body.rtl #instructions { direction: rtl; text-align: right; }
+  #ws-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #444; margin-right: 6px; vertical-align: middle; }
+  #ws-status.on { background: #0f9; box-shadow: 0 0 6px #0f9; }
+</style>
+</head>
+<body>
+<div id="layout">
+  <aside id="side">
+    <h1>▲ G.A.N.E NAV</h1>
+
+    <h2>Origin</h2>
+    <div class="row">
+      <input id="olat" type="number" step="0.000001" value="32.0853" />
+      <input id="olon" type="number" step="0.000001" value="34.7818" />
+    </div>
+
+    <h2>Destination</h2>
+    <div class="row">
+      <input id="dlat" type="number" step="0.000001" value="31.7683" />
+      <input id="dlon" type="number" step="0.000001" value="35.2137" />
+    </div>
+
+    <label for="mode">Mode</label>
+    <select id="mode">
+      <option value="driving">Driving</option>
+      <option value="walking">Walking</option>
+      <option value="cycling">Cycling</option>
+      <option value="drone">Drone</option>
+    </select>
+
+    <label for="lang">Language</label>
+    <select id="lang">
+      <option value="en">English</option>
+      <option value="he">עברית (RTL)</option>
+      <option value="ar">العربية (RTL)</option>
+    </select>
+
+    <button id="btn-route">Compute Route</button>
+    <button id="btn-ws">Start Live Tracking</button>
+
+    <h2>Summary</h2>
+    <div class="stat">Distance: <b id="s-dist">—</b></div>
+    <div class="stat">ETA: <b id="s-eta">—</b></div>
+    <div class="stat">Mode: <b id="s-mode">—</b></div>
+    <div class="stat"><span id="ws-status"></span>Live: <b id="s-live">off</b></div>
+
+    <h2>Turn-by-turn</h2>
+    <div id="instructions"></div>
+  </aside>
+
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin=""></script>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const map = L.map("map").setView([32.0853, 34.7818], 8);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19, attribution: "© OpenStreetMap contributors",
+  }).addTo(map);
+
+  let routeLayer = null;
+  let liveMarker = null;
+  let ws = null;
+
+  const setRTL = (lang) => {
+    document.documentElement.dir = (lang === "he" || lang === "ar") ? "rtl" : "ltr";
+    document.body.classList.toggle("rtl", lang === "he" || lang === "ar");
+  };
+
+  async function computeRoute() {
+    const payload = {
+      origin_lat: +$("olat").value, origin_lon: +$("olon").value,
+      dest_lat:   +$("dlat").value, dest_lon:   +$("dlon").value,
+      mode:       $("mode").value, alternatives: 1,
+    };
+    const lang = $("lang").value;
+    setRTL(lang);
+
+    const r = await fetch(`/api/v1/nav/turn-by-turn?lang=${lang}`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) { alert("Route failed: " + r.status); return; }
+    const data = await r.json();
+
+    $("s-dist").textContent = (data.total_distance_m / 1000).toFixed(2) + " km";
+    $("s-eta").textContent  = Math.round(data.total_duration_s / 60) + " min";
+    $("s-mode").textContent = payload.mode;
+
+    if (routeLayer) map.removeLayer(routeLayer);
+    const coords = data.instructions.map(i => [i.lat, i.lon]);
+    if (coords.length) {
+      routeLayer = L.polyline(coords, {color: "#00f5ff", weight: 4, opacity: 0.85}).addTo(map);
+      map.fitBounds(routeLayer.getBounds(), {padding: [30, 30]});
+    }
+
+    const list = $("instructions");
+    list.innerHTML = "";
+    for (const ins of data.instructions) {
+      const el = document.createElement("div");
+      el.className = "ins";
+      const d = ins.distance_m >= 1000 ? (ins.distance_m/1000).toFixed(1)+" km" : Math.round(ins.distance_m)+" m";
+      const span = document.createElement("span");
+      span.className = "dist";
+      span.textContent = d;
+      el.appendChild(span);
+      el.appendChild(document.createTextNode(" \u2014 "));
+      el.appendChild(document.createTextNode(ins.instruction));
+      list.appendChild(el);
+    }
+  }
+
+  function toggleLive() {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.close();
+      return;
+    }
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    ws = new WebSocket(`${proto}://${location.host}/api/v1/nav/ws/position?interval_s=1`);
+    ws.onopen = () => {
+      $("ws-status").classList.add("on");
+      $("s-live").textContent = "streaming";
+      $("btn-ws").textContent = "Stop Live Tracking";
+    };
+    ws.onmessage = (ev) => {
+      const p = JSON.parse(ev.data);
+      if (!liveMarker) {
+        liveMarker = L.circleMarker([p.lat, p.lon], {
+          radius: 8, color: "#ff6ec7", fillColor: "#ff6ec7", fillOpacity: 0.9,
+        }).addTo(map);
+      } else {
+        liveMarker.setLatLng([p.lat, p.lon]);
+      }
+    };
+    ws.onclose = () => {
+      $("ws-status").classList.remove("on");
+      $("s-live").textContent = "off";
+      $("btn-ws").textContent = "Start Live Tracking";
+    };
+    ws.onerror = () => { $("s-live").textContent = "error"; };
+  }
+
+  $("btn-route").addEventListener("click", computeRoute);
+  $("btn-ws").addEventListener("click", toggleLive);
+  $("lang").addEventListener("change", (e) => setRTL(e.target.value));
+})();
+</script>
+</body>
+</html>

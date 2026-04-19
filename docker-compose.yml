@@ -1,11 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# BRAINIAC AI — Docker Compose Stack
+# G.A.N.E — Docker Compose Stack
 # ═══════════════════════════════════════════════════════════════════════════════
 
 version: "3.9"
 
 services:
-  # ── BRAINIAC API Server ─────────────────────────────────────────────────────
+  # ── G.A.N.E API Server ───────────────────────────────────────────────────────
   brainiac:
     build:
       context: .
@@ -35,8 +35,10 @@ services:
     image: redis:7-alpine
     container_name: brainiac-redis
     restart: unless-stopped
+    # Bound to localhost only in local-dev compose. For production, expose via
+    # an internal service mesh or remove the published port entirely.
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - brainiac-net
     healthcheck:
@@ -51,21 +53,23 @@ services:
     container_name: brainiac-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - brainiac-net
 
   # ── Grafana (dashboards) ─────────────────────────────────────────────────────
+  # GF_SECURITY_ADMIN_PASSWORD is REQUIRED — no default. Set it in .env or
+  # the deployment environment. Compose will refuse to start if unset.
   grafana:
     image: grafana/grafana:latest
     container_name: brainiac-grafana
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=brainiac
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?Set GF_SECURITY_ADMIN_PASSWORD in .env}
     volumes:
       - grafana-data:/var/lib/grafana
     networks:

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# ─── BRAINIAC Verification Script ─────────────────────────────────────────────
+# ─── G.A.N.E Verification Script ──────────────────────────────────────────────
 # Runs the full integrity check: imports, CLI, tests, linting.
 set -e
 
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  BRAINIAC System Verification                                    ║"
+echo "║  G.A.N.E System Verification                                     ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 
 echo ""
@@ -31,5 +31,5 @@ pytest tests/ --ignore=tests/test_neuro_core.py -q
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  ✅ BRAINIAC VERIFIED — all systems operational                  ║"
+echo "║  ✅ G.A.N.E VERIFIED — all systems operational                   ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"

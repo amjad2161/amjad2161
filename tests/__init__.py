@@ -1,1 +1,1 @@
-"""BRAINIAC test suite."""
+"""G.A.N.E test suite."""

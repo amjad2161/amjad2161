@@ -1,4 +1,4 @@
-"""Pydantic request/response models for the BRAINIAC API."""
+"""Pydantic request/response models for the G.A.N.E API."""
 from __future__ import annotations
 
 from typing import Any
@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 # ── NEURO-CORE ────────────────────────────────────────────────────────────────
 
 class ThinkRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=32768, description="Question or task for BRAINIAC")
+    prompt: str = Field(..., min_length=1, max_length=32768, description="Question or task for G.A.N.E")
     depth: str = Field("standard", pattern="^(fast|standard|deep)$")
     use_cache: bool = True
 
