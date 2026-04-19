@@ -1,8 +1,9 @@
-"""Integration tests — verify all BRAINIAC modules work together."""
+"""Integration tests — verify all G.A.N.E modules work together end-to-end."""
 import pytest
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    Localization, MedicalProtocols,
 )
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
@@ -130,6 +131,102 @@ def test_creative_generates_badge_for_status():
     offline = engine.generate_svg_badge("OFFLINE", color="#ff4444")
     assert "ONLINE" in online
     assert "OFFLINE" in offline
+
+
+@pytest.mark.asyncio
+async def test_full_gane_boot_12_modules():
+    """Full orchestrator must bring up all 12 modules including Localization, Medical, and INS."""
+    from brainiac import Brainiac
+    bot = Brainiac(secret_key="integration-test")
+    report = await bot.boot()
+    assert report.system_state.value == "ONLINE"
+    assert len(report.modules) == 12
+    assert "localization" in report.modules
+    assert "medical_protocols" in report.modules
+    assert "ins" in report.modules
+    for name, status in report.modules.items():
+        assert status == "ONLINE", f"{name} is {status}"
+    await bot.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_medical_triage_recommends_protocol():
+    """Medical engine must accept vitals and return an urgency category + protocol."""
+    med = MedicalProtocols()
+    # Simulated cardiac arrest patient vitals (real algorithm, no demo)
+    result = med.triage(heart_rate=0, respiratory_rate=0, systolic_bp=0, gcs=3)
+    assert result.category.value == "immediate"
+    assert result.score >= 8
+    # And the recommended protocol must actually be retrievable
+    proto = med.get_protocol(result.recommended_protocol)
+    assert proto is not None
+    assert len(proto.steps) >= 10
+
+
+@pytest.mark.asyncio
+async def test_medical_dose_and_localization_rtl_together():
+    """Calculate a dose AND translate the arrival phrase to Hebrew RTL."""
+    med = MedicalProtocols()
+    loc_he = Localization(lang="he")
+    loc_ar = Localization(lang="ar")
+
+    # Real dose calculation
+    dose = med.calculate_dose("epinephrine", weight_kg=70)
+    assert dose["actual_dose_mg"] == pytest.approx(0.7)
+
+    # Real RTL verification
+    assert loc_he.is_rtl is True
+    assert loc_ar.is_rtl is True
+    assert "הגעת" in loc_he.arrival()
+    assert "وصلت" in loc_ar.arrival()
+
+
+@pytest.mark.asyncio
+async def test_navigation_turn_by_turn_across_languages():
+    """Route from one point to another and render turn-by-turn in 3 languages."""
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0853, lon=34.7818)
+    dest   = Coordinate(lat=32.0900, lon=34.7900)
+    route = await nav.route(origin, dest, mode=TransportMode.DRIVE)
+
+    en_steps = nav.build_turn_by_turn(route, lang="en")
+    he_steps = nav.build_turn_by_turn(route, lang="he")
+    ar_steps = nav.build_turn_by_turn(route, lang="ar")
+
+    assert len(en_steps) == len(he_steps) == len(ar_steps)
+    # Verify each language produces distinct text
+    en_text = " ".join(s["instruction"] for s in en_steps)
+    he_text = " ".join(s["instruction"] for s in he_steps)
+    ar_text = " ".join(s["instruction"] for s in ar_steps)
+    assert en_text != he_text != ar_text
+
+
+@pytest.mark.asyncio
+async def test_nav_battery_check_with_drone():
+    """Drone battery feasibility check must return a feasible verdict for short routes."""
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0853, lon=34.7818)
+    dest = Coordinate(lat=32.0860, lon=34.7830)
+    route = await nav.route(origin, dest, mode=TransportMode.DRONE)
+    result = nav.is_within_range(route, battery_wh_available=5000.0)
+    assert result["feasible"] is True
+
+
+@pytest.mark.asyncio
+async def test_traffic_prediction_integrated_with_eta():
+    """Traffic factor must actually increase rush-hour ETA vs off-peak."""
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0853, lon=34.7818)
+    dest = Coordinate(lat=32.2000, lon=34.8500)
+    base = nav.estimate_eta(origin, dest)
+
+    rush_factor = nav.predict_traffic_factor(hour_of_day=8, weekday=1)
+    night_factor = nav.predict_traffic_factor(hour_of_day=3, weekday=1)
+    assert rush_factor > night_factor
+
+    rush_eta = nav.adjust_eta_for_conditions(base["duration_s"], traffic_factor=rush_factor)
+    night_eta = nav.adjust_eta_for_conditions(base["duration_s"], traffic_factor=night_factor)
+    assert rush_eta > night_eta
 
 
 @pytest.mark.asyncio

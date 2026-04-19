@@ -239,6 +239,8 @@ class TelemetryHub:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "motion_telemetry",
+            "capabilities": ["imu_ingest", "speed_altitude_heading", "anomaly_detection"],
             "active_streams": len(self._streams),
             "total_readings": self._total_readings,
             "total_anomalies": len(self._anomalies),

@@ -118,7 +118,7 @@ class NeuroCore:
             Return cached result if available.
         """
         depth = depth or self.default_depth
-        cache_key = self._cache_key(prompt, depth)
+        cache_key = self._cache_key(prompt, depth, system_override)
 
         if use_cache and cache_key in self._cache:
             thought = self._cache[cache_key]
@@ -189,6 +189,8 @@ class NeuroCore:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "reasoning_engine",
+            "capabilities": ["mission_planning", "route_reasoning", "natural_language_intents"],
             "total_requests": self._total_requests,
             "total_tokens": self._total_tokens,
             "cache_entries": len(self._cache),
@@ -255,8 +257,8 @@ class NeuroCore:
         raise RuntimeError("NEURO-CORE: all retry attempts exhausted")
 
     @staticmethod
-    def _cache_key(prompt: str, depth: ReasoningDepth) -> str:
-        raw = f"{depth.value}:{prompt}"
+    def _cache_key(prompt: str, depth: ReasoningDepth, system_override: str | None = None) -> str:
+        raw = f"{depth.value}:{system_override or ''}:{prompt}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def _store_cache(self, key: str, thought: Thought) -> None:

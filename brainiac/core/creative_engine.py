@@ -7,7 +7,9 @@ audio composition, and real-time rendering pipeline hooks.
 from __future__ import annotations
 
 import base64
+import html
 import io
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -181,12 +183,16 @@ class CreativeEngine:
 
     def generate_svg_badge(self, text: str, color: str = "#00f5ff") -> str:
         """Generate a simple SVG status badge."""
+        # Validate color: only allow valid hex colors to prevent attribute injection
+        if not re.match(r"^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$", color):
+            color = "#00f5ff"
+        safe_text = html.escape(text, quote=True)
         width = max(60, len(text) * 8 + 20)
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="20">'
             f'<rect width="{width}" height="20" rx="3" fill="#0d0d0d"/>'
             f'<text x="{width//2}" y="14" font-family="monospace" font-size="11" '
-            f'fill="{color}" text-anchor="middle">{text}</text>'
+            f'fill="{color}" text-anchor="middle">{safe_text}</text>'
             f'</svg>'
         )
 
@@ -229,6 +235,8 @@ class CreativeEngine:
             type_counts[a.media_type.value] = type_counts.get(a.media_type.value, 0) + 1
         return {
             "status": "ONLINE",
+            "navigation_role": "map_and_badge_renderer",
+            "capabilities": ["svg_badges", "route_overlays", "scene_generation"],
             "total_assets": self._generation_count,
             "assets_by_type": type_counts,
         }

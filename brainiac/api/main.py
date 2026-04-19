@@ -1,11 +1,12 @@
 """
 BRAINIAC API — FastAPI Application Entry Point
 ===============================================
-All 9 core modules exposed via REST + WebSocket endpoints.
+All 12 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -14,17 +15,20 @@ from typing import AsyncIterator
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, INS,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
+from brainiac.core.medical_protocols import MedicalProtocols, ProtocolCategory, DrugRoute
 from brainiac.api.models import (
     ThinkRequest, ThinkResponse,
     RouteRequest, RouteResponse,
@@ -35,9 +39,16 @@ from brainiac.api.models import (
     RegisterDeviceRequest, PublishRequest,
     HealthResponse,
 )
+from brainiac.agent import AgentRouter
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+_SCAN_FIELDS = frozenset({"prompt", "text", "message", "subject", "description", "query"})
+_MAX_BODY_BYTES        = 10 * 1024 * 1024   # 10 MB hard cap on request body
+_MAX_VISION_BYTES      = 5 * 1024 * 1024    # 5 MB max image upload
+_MAX_SCAN_BYTES        = 256 * 1024         # only scan first 256 KB of JSON
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -49,6 +60,14 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
+medical = MedicalProtocols()
+ins     = INS()
+
+_agent_router = AgentRouter(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    telem=telem, creative=creative, nav=nav, medical=medical,
+    auto_approve=True,
+)
 
 
 @asynccontextmanager
@@ -77,31 +96,65 @@ app.add_middleware(
 )
 
 
+# ── Static frontend (map viewer) ──────────────────────────────────────────────
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/nav", include_in_schema=False)
+async def nav_viewer():
+    """Serve the interactive map viewer."""
+    index = _STATIC_DIR / "nav.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Map viewer not installed")
+    return FileResponse(str(index), media_type="text/html")
+
+
 # ── Security middleware ───────────────────────────────────────────────────────
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "0.0.0.0"
 
-    # Rate limiting
     if not shield.check_rate_limit(client_ip):
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
 
-    # Scan body for injection on write methods
+    # Hard cap on total request body size declared via Content-Length
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > _MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"error": "Request body too large"})
+
+    # Scan parsed JSON field values for injection — never the raw body, never binary uploads
     if request.method in ("POST", "PUT", "PATCH"):
-        try:
-            body_bytes = await request.body()
-            body_str = body_bytes.decode("utf-8", errors="ignore")
-            threat = shield.scan_input(body_str, source_ip=client_ip)
-            if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
-                return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
-        except Exception:
-            pass
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                body_bytes = await request.body()
+                if len(body_bytes) > _MAX_BODY_BYTES:
+                    return JSONResponse(status_code=413, content={"error": "Request body too large"})
+                # json.loads accepts bytes directly (Python 3.6+), no decode needed
+                scan_window = body_bytes if len(body_bytes) <= _MAX_SCAN_BYTES else body_bytes[:_MAX_SCAN_BYTES]
+                try:
+                    body_json = json.loads(scan_window)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    body_json = None
+                if isinstance(body_json, dict):
+                    for key, val in body_json.items():
+                        if key in _SCAN_FIELDS and isinstance(val, str):
+                            threat = shield.scan_input(val, source_ip=client_ip)
+                            if threat and threat.threat_level.value >= 3:
+                                return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
+            except Exception:
+                pass
 
     response = await call_next(request)
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     return response
 
 
@@ -116,17 +169,20 @@ async def root():
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.0.0",
+        version="2.1.0",
         modules={
-            "neuro_core":      "ONLINE",
-            "orbital_nav":     "ONLINE",
-            "satlink":         "ONLINE",
-            "sonic_matrix":    "ONLINE",
-            "nexus_sync":      "ONLINE",
-            "telemetry_hub":   "ONLINE",
-            "cyber_shield":    "ONLINE",
-            "creative_engine": "ONLINE",
-            "omni_vision":     "ONLINE",
+            "neuro_core":        "ONLINE",
+            "orbital_nav":       "ONLINE",
+            "satlink":           "ONLINE",
+            "sonic_matrix":      "ONLINE",
+            "nexus_sync":        "ONLINE",
+            "telemetry_hub":     "ONLINE",
+            "cyber_shield":      "ONLINE",
+            "creative_engine":   "ONLINE",
+            "omni_vision":       "ONLINE",
+            "localization":      "ONLINE",
+            "medical_protocols": "ONLINE",
+            "ins":               "ONLINE",
         },
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -144,6 +200,7 @@ async def diagnostics():
         "cyber_shield":    shield.diagnostics(),
         "creative_engine": creative.diagnostics(),
         "omni_vision":     vision.diagnostics(),
+        "ins":             ins.diagnostics(),
     }
 
 
@@ -168,7 +225,7 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal processing error")
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -195,7 +252,7 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal processing error")
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -246,6 +303,188 @@ async def get_position():
         "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
         "satellites": [{"system": s.system, "fix": s.fix_type, "hdop": s.hdop} for s in sats],
     }
+
+
+@app.get("/api/v1/nav/gnss", tags=["ORBITAL-NAV"])
+async def get_gnss_status():
+    """Full multi-constellation GNSS status: 6 systems + SBAS + per-satellite signals."""
+    sats = await nav.get_satellite_status()
+    sbas = nav.get_sbas_status()
+    return {
+        "gnss_count": len(nav.GNSS_SYSTEMS),
+        "gnss_systems": nav.GNSS_SYSTEMS,
+        "catalog": nav.gnss_catalog(),
+        "constellations": [
+            {
+                "system": s.system,
+                "visible": s.satellites_visible,
+                "used": s.satellites_used,
+                "hdop": s.hdop, "pdop": s.pdop,
+                "fix_type": s.fix_type,
+                "signals": [
+                    {"prn": sig.prn, "elevation_deg": sig.elevation_deg,
+                     "azimuth_deg": sig.azimuth_deg, "snr_dbhz": sig.snr_dbhz,
+                     "used_in_fix": sig.used_in_fix}
+                    for sig in s.signals
+                ],
+            }
+            for s in sats
+        ],
+        "sbas": [
+            {"system": s.system, "region": s.region, "active": s.active,
+             "correction_age_s": s.correction_age_s}
+            for s in sbas
+        ],
+    }
+
+
+@app.post("/api/v1/nav/turn-by-turn", tags=["ORBITAL-NAV"])
+async def turn_by_turn(req: RouteRequest, lang: str = "en"):
+    """Generate localized turn-by-turn directions. Supports en/he/ar (RTL)."""
+    if lang not in ("en", "he", "ar"):
+        raise HTTPException(status_code=400, detail="lang must be one of: en, he, ar")
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    mode   = TransportMode(req.mode)
+    route  = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
+    instructions = nav.build_turn_by_turn(route, lang=lang)
+    return {
+        "lang": lang,
+        "is_rtl": lang in ("he", "ar"),
+        "total_distance_m": route.total_distance_m,
+        "total_duration_s": route.total_duration_s,
+        "instructions": instructions,
+    }
+
+
+@app.post("/api/v1/nav/eta-with-conditions", tags=["ORBITAL-NAV"])
+async def eta_with_conditions(
+    origin_lat: float, origin_lon: float,
+    dest_lat: float, dest_lon: float,
+    mode: str = "driving",
+    hour: int | None = None, weekday: int = 0,
+    weather_factor: float = 1.0,
+):
+    """Fast ETA with time-of-day traffic prediction + weather adjustment."""
+    origin = Coordinate(lat=origin_lat, lon=origin_lon)
+    dest   = Coordinate(lat=dest_lat,   lon=dest_lon)
+    tmode  = TransportMode(mode)
+    est = nav.estimate_eta(origin, dest, mode=tmode)
+    traffic_factor = 1.0
+    if hour is not None:
+        traffic_factor = nav.predict_traffic_factor(hour, weekday)
+    adjusted = nav.adjust_eta_for_conditions(
+        est["duration_s"], traffic_factor=traffic_factor, weather_factor=weather_factor,
+    )
+    return {
+        **est,
+        "traffic_factor": traffic_factor,
+        "weather_factor": weather_factor,
+        "adjusted_duration_s": round(adjusted, 1),
+        "adjusted_eta_minutes": round(adjusted / 60, 1),
+    }
+
+
+@app.post("/api/v1/nav/battery-check", tags=["ORBITAL-NAV"])
+async def battery_check(
+    req: RouteRequest,
+    battery_wh: float,
+    wind_factor: float = 1.0,
+    reserve_percent: float = 20.0,
+):
+    """Check whether a planned route is feasible with available battery."""
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    tmode  = TransportMode(req.mode)
+    route_obj = await nav.route(origin, dest, mode=tmode, alternatives=0)
+    return nav.is_within_range(
+        route_obj, battery_wh_available=battery_wh,
+        wind_factor=wind_factor, reserve_percent=reserve_percent,
+    )
+
+
+@app.post("/api/v1/nav/voice-guided-route", tags=["ORBITAL-NAV"])
+async def voice_guided_route(req: RouteRequest, lang: str = "en"):
+    """Full route + turn-by-turn + TTS audio per step (SonicMatrix + Localization + Nav)."""
+    if lang not in ("en", "he", "ar"):
+        raise HTTPException(status_code=400, detail="lang must be one of: en, he, ar")
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    tmode  = TransportMode(req.mode)
+    route = await nav.route(origin, dest, mode=tmode, alternatives=req.alternatives)
+    steps = nav.build_turn_by_turn(route, lang=lang)
+    voice_steps = sonic.synthesize_turn_by_turn(steps, lang=lang)
+    return {
+        "lang": lang,
+        "is_rtl": lang in ("he", "ar"),
+        "route": route.summary(),
+        "step_count": len(steps),
+        "voice_steps": [
+            {"instruction": v["instruction"], "distance_m": v["distance_m"],
+             "lat": v["lat"], "lon": v["lon"],
+             "audio_size_bytes": len(v["audio_bytes"]), "lang": v["lang"]}
+            for v in voice_steps
+        ],
+    }
+
+
+@app.post("/api/v1/nav/medical-evacuation", tags=["ORBITAL-NAV"])
+async def medical_evacuation_route(
+    patient_lat: float, patient_lon: float,
+    hospital_lat: float, hospital_lon: float,
+    heart_rate: int, respiratory_rate: int,
+    systolic_bp: int, gcs: int,
+    spo2: int = 98, mode: str = "drone",
+):
+    """Triage patient → pick protocol → plan fastest evacuation route with priority ETA."""
+    tmode = TransportMode(mode)
+    triage = medical.triage(
+        heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+        systolic_bp=systolic_bp, gcs=gcs, spo2=spo2,
+    )
+    protocol = None
+    if triage.recommended_protocol:
+        proto = medical.get_protocol(triage.recommended_protocol)
+        if proto:
+            protocol = {"name": proto.name, "urgency": proto.urgency.value,
+                        "steps": len(proto.steps), "reference": proto.reference}
+    route_obj = await nav.route(
+        Coordinate(lat=patient_lat, lon=patient_lon),
+        Coordinate(lat=hospital_lat, lon=hospital_lon),
+        mode=tmode,
+    )
+    traffic_factor = 1.0 if triage.category.value == "immediate" else 1.3
+    adjusted = nav.adjust_eta_for_conditions(route_obj.total_duration_s, traffic_factor=traffic_factor)
+    return {
+        "triage": {"category": triage.category.value, "score": triage.score,
+                   "rationale": triage.rationale},
+        "protocol": protocol,
+        "route": {**route_obj.summary(), "adjusted_eta_s": round(adjusted, 1),
+                  "adjusted_eta_min": round(adjusted / 60, 1)},
+    }
+
+
+@app.websocket("/api/v1/nav/ws/position")
+async def ws_position(websocket: WebSocket, interval_s: float = 1.0):
+    """Live GPS position stream over WebSocket. Closes cleanly on disconnect."""
+    interval = max(0.1, min(10.0, interval_s))
+    await websocket.accept()
+    try:
+        while True:
+            pos = await nav.get_position()
+            await websocket.send_json({
+                "lat": pos.lat, "lon": pos.lon, "alt_m": pos.alt_m,
+                "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
+            })
+            await asyncio.sleep(interval)
+    except WebSocketDisconnect:
+        log.info("ws.position.disconnect")
+    except Exception as exc:
+        log.warning("ws.position.error", error=str(exc))
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 # ── SATLINK SOS ───────────────────────────────────────────────────────────────
@@ -388,7 +627,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail="Invalid device registration parameters")
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
@@ -400,6 +639,81 @@ async def list_devices(connected_only: bool = False):
 async def publish_message(req: PublishRequest):
     msg = await nexus.publish(req.device_id, req.topic, req.payload, req.qos)
     return {"msg_id": msg.msg_id, "topic": msg.topic, "timestamp": msg.timestamp}
+
+
+# ── MEDICAL PROTOCOLS ─────────────────────────────────────────────────────────
+
+@app.get("/api/v1/medical/protocols", tags=["MEDICAL"])
+async def list_protocols(category: str | None = None):
+    """List available clinical protocols, optionally filtered by category."""
+    cat = ProtocolCategory(category) if category else None
+    return {"protocols": medical.list_protocols(cat)}
+
+
+@app.get("/api/v1/medical/protocol/{name}", tags=["MEDICAL"])
+async def get_protocol(name: str):
+    """Retrieve a specific clinical protocol with steps and drug references."""
+    proto = medical.get_protocol(name)
+    if not proto:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    return {
+        "name": proto.name,
+        "category": proto.category.value,
+        "urgency": proto.urgency.value,
+        "reference": proto.reference,
+        "steps": [
+            {"step": s.step_number, "action": s.action, "critical": s.critical,
+             "duration_s": s.duration_s, "notes": s.notes}
+            for s in proto.steps
+        ],
+        "drugs": [
+            {"drug": d.drug, "dose_mg_per_kg": d.dose_mg_per_kg,
+             "max_mg": d.max_dose_mg, "routes": [r.value for r in d.routes]}
+            for d in proto.drugs
+        ],
+        "contraindications": proto.contraindications,
+        "disclaimer": "EDUCATIONAL REFERENCE ONLY — NOT CLINICAL ADVICE",
+    }
+
+
+@app.post("/api/v1/medical/dose", tags=["MEDICAL"])
+async def calculate_dose(drug: str, weight_kg: float, route: str | None = None):
+    """Calculate weight-based drug dosage with safety clamping."""
+    dr = DrugRoute(route) if route else None
+    return medical.calculate_dose(drug, weight_kg, route=dr)
+
+
+@app.post("/api/v1/medical/triage", tags=["MEDICAL"])
+async def triage(
+    heart_rate: int, respiratory_rate: int, systolic_bp: int, gcs: int,
+    spo2: int = 98, temperature_c: float = 37.0,
+):
+    """Field triage scoring based on vital signs. Returns urgency category and recommended protocol."""
+    result = medical.triage(
+        heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+        systolic_bp=systolic_bp, gcs=gcs, spo2=spo2, temperature_c=temperature_c,
+    )
+    return {
+        "category": result.category.value,
+        "score": result.score,
+        "rationale": result.rationale,
+        "recommended_protocol": result.recommended_protocol,
+    }
+
+
+@app.get("/api/v1/medical/drugs", tags=["MEDICAL"])
+async def list_drugs():
+    """List all drugs in the reference database."""
+    return {"drugs": medical.list_drugs()}
+
+
+@app.get("/api/v1/medical/drug/{name}", tags=["MEDICAL"])
+async def get_drug(name: str):
+    """Get detailed drug information."""
+    info = medical.get_drug_info(name)
+    if not info:
+        raise HTTPException(status_code=404, detail="Drug not found")
+    return info
 
 
 # ── CYBER-SHIELD ──────────────────────────────────────────────────────────────
@@ -417,6 +731,85 @@ async def scan_input(text: str, source_ip: str = "0.0.0.0"):
     }
 
 
+@app.post("/api/v1/security/detect-gps-spoofing", tags=["CYBER-SHIELD"])
+async def detect_gps_spoofing(
+    reported_lat: float, reported_lon: float,
+    previous_lat: float | None = None, previous_lon: float | None = None,
+    previous_ts: float | None = None, current_ts: float | None = None,
+    hdop: float = 1.0,
+):
+    """Detect GNSS spoofing based on position, HDOP and temporal plausibility."""
+    return shield.detect_gps_spoofing(
+        reported_lat=reported_lat, reported_lon=reported_lon,
+        previous_lat=previous_lat, previous_lon=previous_lon,
+        previous_ts=previous_ts, current_ts=current_ts,
+        hdop=hdop,
+    )
+
+
+# ── INS (Inertial Navigation System) ────────────────────────────────────────
+
+@app.get("/api/v1/ins/position", tags=["INS"])
+async def ins_position():
+    """Get current INS position (GNSS/INS fused or dead-reckoning fallback)."""
+    sats = await nav.get_satellite_status()
+    total_used = sum(s.satellites_used for s in sats)
+    best_hdop = min((s.hdop for s in sats), default=99.0)
+    best_fix = "NO_FIX"
+    for s in sats:
+        if s.fix_type in ("RTK_FIXED", "RTK_FLOAT", "3D"):
+            best_fix = s.fix_type
+            break
+    health = ins.update_gnss_health(
+        constellations_available=len(sats),
+        total_satellites_used=total_used,
+        best_hdop=best_hdop,
+        fix_type=best_fix,
+    )
+    if health.gnss_available:
+        gnss_pos = await nav.get_position()
+        ins_pos = ins.update_gnss(gnss_pos.lat, gnss_pos.lon, gnss_pos.alt_m, gnss_pos.accuracy_m)
+    else:
+        ins_pos = ins.position()
+    return {
+        "lat": ins_pos.lat, "lon": ins_pos.lon, "alt_m": ins_pos.alt_m,
+        "heading_deg": ins_pos.heading_deg, "speed_ms": ins_pos.speed_ms,
+        "source": ins_pos.source.value, "accuracy_m": ins_pos.accuracy_m,
+        "drift_m": ins_pos.drift_m,
+        "gnss_health": {"score": health.score, "available": health.gnss_available,
+                        "constellations": health.constellations_available},
+        "ins_state": ins.state.value,
+    }
+
+
+@app.get("/api/v1/ins/health", tags=["INS"])
+async def ins_health():
+    """Get GNSS health score and INS state."""
+    return {
+        "ins_state": ins.state.value,
+        "gnss_health": {
+            "score": ins.get_gnss_health().score,
+            "available": ins.get_gnss_health().gnss_available,
+            "constellations": ins.get_gnss_health().constellations_available,
+            "satellites_used": ins.get_gnss_health().total_satellites_used,
+            "best_hdop": ins.get_gnss_health().best_hdop,
+            "fix_type": ins.get_gnss_health().fix_type,
+        },
+        "diagnostics": ins.diagnostics(),
+    }
+
+
+@app.post("/api/v1/ins/corridor-check", tags=["INS"])
+async def corridor_check(request: Request, threshold_m: float = 50.0):
+    """Check if current position is within a route corridor."""
+    body = await request.json()
+    route_coords = body.get("route_coords", [])
+    if not route_coords:
+        raise HTTPException(status_code=400, detail="route_coords is required (list of [lat,lon])")
+    coord_tuples = [(c[0], c[1]) for c in route_coords]
+    return ins.corridor_check(coord_tuples, threshold_m=threshold_m)
+
+
 @app.post("/api/v1/security/audit-config", tags=["CYBER-SHIELD"])
 async def audit_config(config: dict):
     result = shield.audit_config(config)
@@ -429,12 +822,21 @@ async def audit_config(config: dict):
 
 # ── OMNI-VISION ───────────────────────────────────────────────────────────────
 
+def _validate_image_request(request: Request, image_bytes: bytes) -> None:
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    if len(image_bytes) > _MAX_VISION_BYTES:
+        raise HTTPException(status_code=413, detail=f"Image exceeds {_MAX_VISION_BYTES} byte limit")
+    ct = request.headers.get("content-type", "")
+    if ct and not ct.startswith("image/") and "octet-stream" not in ct:
+        raise HTTPException(status_code=415, detail="Content-Type must be image/* or application/octet-stream")
+
+
 @app.post("/api/v1/vision/analyze", tags=["OMNI-VISION"])
 async def analyze_image(request: Request):
     """Accepts raw image bytes in request body."""
     image_bytes = await request.body()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    _validate_image_request(request, image_bytes)
     analysis = vision.analyze_scene(image_bytes)
     return {
         "description": analysis.description,
@@ -447,4 +849,57 @@ async def analyze_image(request: Request):
 @app.post("/api/v1/vision/info", tags=["OMNI-VISION"])
 async def image_info(request: Request):
     image_bytes = await request.body()
+    _validate_image_request(request, image_bytes)
     return vision.image_info(image_bytes)
+
+
+# ── GANE AGENT LAYER ─────────────────────────────────────────────────────────
+
+@app.post("/api/v1/agent/run", tags=["GANE-AGENT"])
+async def agent_run(request: Request):
+    """
+    Dispatch a prompt to the GANE multi-agent system.
+    Routes to the best specialist agent (telemetry, medical, navigation).
+
+    Body: {"prompt": "...", "force_agent": "telemetry|medical|navigation"}
+    """
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    force_agent = body.get("force_agent")
+    result = await _agent_router.run(prompt, force_agent=force_agent)
+    return {
+        "agent_used": result.agent_used,
+        "routing_reason": result.routing_reason,
+        "response": result.episode.response,
+        "episode_id": result.episode.episode_id,
+        "tool_calls": result.episode.tool_calls,
+        "tokens_used": result.episode.tokens_used,
+        "cost_usd": result.episode.cost_usd,
+        "success": result.episode.success,
+        "duration_ms": round(result.total_ms, 1),
+    }
+
+
+@app.get("/api/v1/agent/diagnostics", tags=["GANE-AGENT"])
+async def agent_diagnostics():
+    """Return diagnostics for all GANE agents and shared memory."""
+    return _agent_router.diagnostics()
+
+
+@app.get("/api/v1/agent/memory", tags=["GANE-AGENT"])
+async def agent_memory():
+    """Return a summary of the agent memory store."""
+    return await _agent_router.memory.diagnostics()
+
+
+@app.post("/api/v1/agent/route-preview", tags=["GANE-AGENT"])
+async def agent_route_preview(request: Request):
+    """Preview which agent would be selected for a given prompt without executing."""
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    agent_name, reason = AgentRouter.route(prompt)
+    return {"agent": agent_name, "reason": reason}

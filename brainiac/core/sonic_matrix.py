@@ -218,8 +218,38 @@ class SonicMatrix:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "voice_guidance",
+            "capabilities": ["voice_turn_by_turn", "multi_language_tts", "driver_commands"],
             "default_language": self.default_lang,
             "supported_languages": len(LANGUAGE_MAP),
             "tts_cache_entries": len(self._tts_cache),
             "voice_profiles": len(self._voice_profiles),
         }
+
+    def synthesize_turn_by_turn(
+        self,
+        steps: list[dict],
+        lang: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Produce voice-ready audio payloads for a turn-by-turn instruction list.
+
+        Each returned item carries the original instruction + synthesized audio bytes.
+        Intended to bridge OrbitalNav.build_turn_by_turn() → in-cabin voice guidance.
+        """
+        speech_lang = lang or self.default_lang
+        payloads = []
+        for step in steps:
+            text = step.get("instruction", "")
+            if not text:
+                continue
+            result = self.synthesize(text, lang=speech_lang)
+            payloads.append({
+                "instruction": text,
+                "distance_m": step.get("distance_m"),
+                "lat": step.get("lat"),
+                "lon": step.get("lon"),
+                "audio_bytes": result.audio_bytes,
+                "lang": speech_lang,
+            })
+        return payloads

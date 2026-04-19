@@ -70,7 +70,7 @@ class NetworkAuditResult:
 # Simplified known-bad pattern database (production: MISP / VirusTotal / etc.)
 KNOWN_MALWARE_HASHES: set[str] = {
     "d41d8cd98f00b204e9800998ecf8427e",    # empty file md5
-    "e3b0c44298fc1c149afbf4c8996fb924",    # empty file sha256
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",    # empty file sha256
 }
 
 INJECTION_PATTERNS = [
@@ -271,6 +271,78 @@ class CyberShield:
         )
         return event
 
+    # ── GNSS / Navigation Security ───────────────────────────────────────────
+
+    def detect_gps_spoofing(
+        self,
+        reported_lat: float, reported_lon: float,
+        previous_lat: float | None = None, previous_lon: float | None = None,
+        previous_ts: float | None = None, current_ts: float | None = None,
+        hdop: float = 1.0,
+        snr_values: list[float] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Detect GPS/GNSS spoofing indicators.
+
+        Checks performed:
+        - Implausible jump: position delta too large given elapsed time
+        - HDOP anomaly: suspiciously low HDOP (spoofers often report 0.0)
+        - SNR uniformity: spoofed signals often have near-identical SNR values
+        - Coordinate plausibility: lat/lon within valid ranges
+
+        Returns dict with `spoof_likelihood` in [0.0, 1.0] and detail flags.
+        """
+        import math
+        indicators: list[str] = []
+        score = 0.0
+
+        # Coordinate plausibility
+        if not (-90 <= reported_lat <= 90) or not (-180 <= reported_lon <= 180):
+            indicators.append("INVALID_COORDINATE_RANGE")
+            score += 1.0
+
+        # Implausible jump check
+        if (previous_lat is not None and previous_lon is not None
+                and previous_ts is not None and current_ts is not None
+                and current_ts > previous_ts):
+            dlat = math.radians(reported_lat - previous_lat)
+            dlon = math.radians(reported_lon - previous_lon)
+            a = (math.sin(dlat / 2) ** 2 +
+                 math.cos(math.radians(previous_lat)) *
+                 math.cos(math.radians(reported_lat)) *
+                 math.sin(dlon / 2) ** 2)
+            distance_m = 6_371_000 * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            elapsed = current_ts - previous_ts
+            speed_ms = distance_m / elapsed if elapsed > 0 else 0
+            # Spacecraft top speed is ~11 km/s; anything above that is spoofing
+            if speed_ms > 11_000:
+                indicators.append(f"IMPLAUSIBLE_SPEED_{speed_ms:.0f}_m_s")
+                score += 0.8
+            elif speed_ms > 300:   # faster than a commercial jet
+                indicators.append(f"SUSPICIOUSLY_FAST_{speed_ms:.0f}_m_s")
+                score += 0.3
+
+        # HDOP anomaly: spoofers report suspiciously perfect geometry
+        if hdop <= 0.1:
+            indicators.append("HDOP_TOO_PERFECT")
+            score += 0.4
+
+        # SNR uniformity: real signals vary; spoofed often don't
+        if snr_values and len(snr_values) >= 3:
+            mean = sum(snr_values) / len(snr_values)
+            variance = sum((v - mean) ** 2 for v in snr_values) / len(snr_values)
+            if variance < 0.5:
+                indicators.append("SNR_UNIFORMITY_ANOMALY")
+                score += 0.5
+
+        likelihood = min(1.0, score)
+        return {
+            "spoof_likelihood": round(likelihood, 2),
+            "indicators": indicators,
+            "action": "BLOCK" if likelihood >= 0.7 else "MONITOR" if likelihood >= 0.3 else "OK",
+            "reported_position": {"lat": reported_lat, "lon": reported_lon},
+        }
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
@@ -279,6 +351,8 @@ class CyberShield:
             by_level[e.threat_level.name] = by_level.get(e.threat_level.name, 0) + 1
         return {
             "status": "ONLINE",
+            "navigation_role": "security_layer",
+            "capabilities": ["threat_scan", "signing", "gps_spoofing_detection", "rate_limiting"],
             "total_events": len(self._events),
             "events_by_level": by_level,
             "blocked_ips": len(self._blocked_ips),

@@ -27,7 +27,7 @@ def test_health(client):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 9
+    assert len(data["modules"]) == 12
     for mod_status in data["modules"].values():
         assert mod_status == "ONLINE"
     assert data["uptime_s"] >= 0
@@ -195,6 +195,129 @@ def test_register_and_list_device(client):
     assert "test-drone-001" in ids
 
 
+# ── Navigation Enhancements ───────────────────────────────────────────────────
+
+def test_turn_by_turn_en(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=en", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["lang"] == "en"
+    assert data["is_rtl"] is False
+    assert len(data["instructions"]) >= 1
+
+
+def test_turn_by_turn_hebrew_rtl(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=he", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["lang"] == "he"
+    assert data["is_rtl"] is True
+
+
+def test_turn_by_turn_rejects_invalid_lang(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=zz", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 400
+
+
+def test_eta_with_conditions_applies_traffic(client):
+    r = client.post(
+        "/api/v1/nav/eta-with-conditions"
+        "?origin_lat=32.0&origin_lon=34.0&dest_lat=33.0&dest_lon=35.0"
+        "&mode=driving&hour=8&weekday=1"
+    )
+    assert r.status_code == 200
+    data = r.json()
+    # Weekday 08:00 should trigger morning rush multiplier (1.7)
+    assert data["traffic_factor"] == 1.7
+    assert data["adjusted_duration_s"] > data["duration_s"]
+
+
+def test_battery_check_feasible(client):
+    r = client.post("/api/v1/nav/battery-check?battery_wh=10000", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.01, "dest_lon": 34.01,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["feasible"] is True
+
+
+def test_nav_viewer_served(client):
+    r = client.get("/nav")
+    assert r.status_code == 200
+    assert "<!doctype html>" in r.text.lower()
+    assert "BRAINIAC NAV" in r.text
+
+
+# ── Security Middleware ───────────────────────────────────────────────────────
+
+# ── Medical Protocol Endpoints ────────────────────────────────────────────────
+
+def test_list_medical_protocols(client):
+    r = client.get("/api/v1/medical/protocols")
+    assert r.status_code == 200
+    assert "acls_cardiac_arrest" in r.json()["protocols"]
+
+
+def test_get_acls_protocol(client):
+    r = client.get("/api/v1/medical/protocol/acls_cardiac_arrest")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["urgency"] == "immediate"
+    assert len(data["steps"]) >= 10
+    assert "disclaimer" in data
+
+
+def test_get_unknown_protocol_404(client):
+    r = client.get("/api/v1/medical/protocol/fake_protocol")
+    assert r.status_code == 404
+
+
+def test_calculate_drug_dose(client):
+    r = client.post("/api/v1/medical/dose?drug=epinephrine&weight_kg=80")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["drug"] == "Epinephrine"
+    assert data["actual_dose_mg"] > 0
+    assert "VERIFY" in data["disclaimer"]
+
+
+def test_triage_critical(client):
+    r = client.post(
+        "/api/v1/medical/triage"
+        "?heart_rate=0&respiratory_rate=0&systolic_bp=0&gcs=3&spo2=0"
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["category"] == "immediate"
+
+
+def test_list_drugs(client):
+    r = client.get("/api/v1/medical/drugs")
+    assert r.status_code == 200
+    assert "epinephrine" in r.json()["drugs"]
+
+
+def test_get_drug_info(client):
+    r = client.get("/api/v1/medical/drug/naloxone")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["drug"] == "Naloxone"
+
+
 # ── Security Middleware ───────────────────────────────────────────────────────
 
 def test_security_headers(client):
@@ -202,3 +325,5 @@ def test_security_headers(client):
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+    assert r.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+    assert r.headers.get("Permissions-Policy") is not None

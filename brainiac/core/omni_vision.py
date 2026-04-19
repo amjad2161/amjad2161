@@ -196,6 +196,8 @@ class OmniVision:
     def diagnostics(self) -> dict[str, Any]:
         return {
             "status": "ONLINE",
+            "navigation_role": "visual_slam_and_obstacle_avoidance",
+            "capabilities": ["obstacle_detection", "road_sign_recognition", "visual_slam", "multi_spectrum"],
             "spectrums": [s.value for s in self.spectrums],
             "frames_processed": self._frames_processed,
         }
