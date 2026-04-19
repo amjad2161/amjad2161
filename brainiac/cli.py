@@ -24,10 +24,10 @@ def _print_banner() -> None:
 async def _cmd_status() -> int:
     from brainiac.core import (
         NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-        NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+        NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, INS, MedicalProtocols, Localization,
     )
     _print_banner()
-    print("▶ Initialising all 9 core modules...\n")
+    print("▶ Initialising all 12 core modules...\n")
 
     modules = {
         "NEURO-CORE      ": NeuroCore(),
@@ -39,6 +39,9 @@ async def _cmd_status() -> int:
         "CYBER-SHIELD    ": CyberShield(),
         "CREATIVE-ENGINE ": CreativeEngine(),
         "OMNI-VISION     ": OmniVision(),
+        "INS             ": INS(),
+        "MEDICAL-PROTO   ": MedicalProtocols(),
+        "LOCALIZATION    ": Localization(),
     }
 
     print("┌──────────────────┬────────────┐")
@@ -118,6 +121,23 @@ def _cmd_serve() -> int:
     return 0
 
 
+def _cmd_medical_dose(args: list[str]) -> int:
+    from brainiac.core import MedicalProtocols
+
+    if len(args) < 3:
+        print("Usage: brainiac medical-dose <medication> <weight_kg> <mg_per_kg>")
+        return 1
+    med, weight, mg_per_kg = args[0], float(args[1]), float(args[2])
+    result = MedicalProtocols().calculate_dose(
+        medication=med, weight_kg=weight, mg_per_kg=mg_per_kg
+    )
+    print(f"Medication: {result['medication']}")
+    print(f"Recommended: {result['recommended_mg']} mg")
+    print(f"Actual dose: {result['actual_dose_mg']} mg")
+    print(f"Clamped: {result['clamped']}")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
@@ -135,6 +155,8 @@ def main() -> int:
         return asyncio.run(_cmd_demo())
     if cmd == "serve":
         return _cmd_serve()
+    if cmd == "medical-dose":
+        return _cmd_medical_dose(args[1:])
 
     print(f"Unknown command: {cmd!r}")
     return 1

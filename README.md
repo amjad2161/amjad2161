@@ -17,6 +17,22 @@
 
 ---
 
+## `> v2.1.0 QUICK UPDATE`
+
+- Platform now exposes **12 core modules** (adds `INS`, `MedicalProtocols`, `Localization`).
+- New APIs:
+  - `POST /api/v1/nav/eta-with-conditions`
+  - `POST /api/v1/nav/battery-check`
+  - `POST /api/v1/nav/corridor-check`
+  - `POST /api/v1/security/detect-gps-spoofing`
+  - `POST /api/v1/medical/triage`
+  - `POST /api/v1/medical/dose`
+  - `WS /api/v1/nav/ws/position`
+- CLI:
+  - `brainiac medical-dose <medication> <weight_kg> <mg_per_kg>`
+- Environment setup:
+  - copy `.env.example` and set `ANTHROPIC_API_KEY`, `BRAINIAC_SECRET`, `GF_SECURITY_ADMIN_PASSWORD`.
+
 <div align="center">
 
 ```

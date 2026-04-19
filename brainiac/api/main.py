@@ -1,11 +1,12 @@
 """
 BRAINIAC API — FastAPI Application Entry Point
 ===============================================
-All 9 core modules exposed via REST + WebSocket endpoints.
+All 12 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -19,12 +20,13 @@ from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, INS, MedicalProtocols, Localization,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
+from brainiac.core.ins import INSPoint
 from brainiac.api.models import (
     ThinkRequest, ThinkResponse,
     RouteRequest, RouteResponse,
@@ -33,7 +35,8 @@ from brainiac.api.models import (
     TranslateRequest, DetectLanguageRequest, TTSRequest,
     ImagePromptRequest,
     RegisterDeviceRequest, PublishRequest,
-    HealthResponse,
+    HealthResponse, ETAWithConditionsRequest, BatteryCheckRequest,
+    MedicalTriageRequest, MedicalDoseRequest, GPSSpoofingRequest, CorridorCheckRequest,
 )
 
 log = structlog.get_logger("brainiac.api")
@@ -49,6 +52,9 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
+ins     = INS()
+medical = MedicalProtocols()
+localization = Localization()
 
 
 @asynccontextmanager
@@ -93,6 +99,21 @@ async def security_middleware(request: Request, call_next):
             body_bytes = await request.body()
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
+            if not threat and request.headers.get("content-type", "").startswith("application/json"):
+                payload = json.loads(body_str or "{}")
+                if isinstance(payload, dict):
+                    fields = [v for v in payload.values() if isinstance(v, str)]
+                    nested = [
+                        subv
+                        for v in payload.values()
+                        if isinstance(v, dict)
+                        for subv in v.values()
+                        if isinstance(subv, str)
+                    ]
+                    for candidate in [*fields, *nested]:
+                        threat = shield.scan_input(candidate, source_ip=client_ip)
+                        if threat:
+                            break
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
                 return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
         except Exception:
@@ -127,6 +148,9 @@ async def health():
             "cyber_shield":    "ONLINE",
             "creative_engine": "ONLINE",
             "omni_vision":     "ONLINE",
+            "ins":             "ONLINE",
+            "medical_protocols":"ONLINE",
+            "localization":    "ONLINE",
         },
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -144,6 +168,9 @@ async def diagnostics():
         "cyber_shield":    shield.diagnostics(),
         "creative_engine": creative.diagnostics(),
         "omni_vision":     vision.diagnostics(),
+        "ins":             ins.diagnostics(),
+        "medical_protocols": medical.diagnostics(),
+        "localization":      localization.diagnostics(),
     }
 
 
@@ -168,7 +195,8 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        log.exception("api.think.failed", error=str(exc))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -195,7 +223,8 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        log.exception("api.think_improve.failed", error=str(exc))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -246,6 +275,34 @@ async def get_position():
         "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
         "satellites": [{"system": s.system, "fix": s.fix_type, "hdop": s.hdop} for s in sats],
     }
+
+
+@app.websocket("/api/v1/nav/ws/position")
+async def ws_position(ws: WebSocket):
+    await ws.accept()
+    started = time.time()
+    max_duration_s = 30.0
+    try:
+        while time.time() - started < max_duration_s:
+            pos = await nav.get_position()
+            await ws.send_json({"lat": pos.lat, "lon": pos.lon, "timestamp": pos.timestamp})
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        return
+    finally:
+        await ws.close()
+
+
+@app.post("/api/v1/nav/eta-with-conditions", tags=["ORBITAL-NAV"])
+async def eta_with_conditions(req: ETAWithConditionsRequest):
+    eta_minutes = nav.estimate_eta(req.distance_km, mode=TransportMode(req.mode))
+    return {"eta_minutes": round(eta_minutes * req.weather_factor * req.traffic_factor, 2)}
+
+
+@app.post("/api/v1/nav/battery-check", tags=["ORBITAL-NAV"])
+async def battery_check(req: BatteryCheckRequest):
+    needed = req.distance_km * req.consumption_pct_per_km + req.reserve_pct
+    return {"can_complete": req.battery_pct >= needed, "required_pct": round(needed, 2)}
 
 
 # ── SATLINK SOS ───────────────────────────────────────────────────────────────
@@ -425,6 +482,39 @@ async def audit_config(config: dict):
         "vulnerabilities": result.vulnerabilities,
         "recommendations": result.hardening_recommendations,
     }
+
+
+@app.post("/api/v1/security/detect-gps-spoofing", tags=["CYBER-SHIELD"])
+async def detect_gps_spoofing(req: GPSSpoofingRequest):
+    return shield.detect_gps_spoofing(
+        position_jump_m=req.position_jump_m,
+        speed_mps=req.speed_mps,
+        snr_drop_db=req.snr_drop_db,
+        clock_bias_ms=req.clock_bias_ms,
+    )
+
+
+@app.post("/api/v1/nav/corridor-check", tags=["ORBITAL-NAV"])
+async def corridor_check(req: CorridorCheckRequest):
+    corridor = [INSPoint(lat=lat, lon=lon) for lat, lon in req.corridor]
+    ok = ins.corridor_check(INSPoint(lat=req.point_lat, lon=req.point_lon), corridor, req.width_m)
+    return {"within_corridor": ok}
+
+
+@app.post("/api/v1/medical/triage", tags=["MEDICAL"])
+async def medical_triage(req: MedicalTriageRequest):
+    return {"priority": medical.triage(heart_rate=req.heart_rate, systolic_bp=req.systolic_bp, spo2=req.spo2)}
+
+
+@app.post("/api/v1/medical/dose", tags=["MEDICAL"])
+async def medical_dose(req: MedicalDoseRequest):
+    return medical.calculate_dose(
+        medication=req.medication,
+        weight_kg=req.weight_kg,
+        mg_per_kg=req.mg_per_kg,
+        min_mg=req.min_mg,
+        max_mg=req.max_mg,
+    )
 
 
 # ── OMNI-VISION ───────────────────────────────────────────────────────────────

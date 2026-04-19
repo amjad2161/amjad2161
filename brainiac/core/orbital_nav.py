@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -72,6 +73,14 @@ class Waypoint:
     eta_seconds: float = 0.0
     instruction: str = ""
     distance_m: float = 0.0
+
+
+@dataclass
+class RoutePreferences:
+    avoid_tolls: bool = False
+    prefer_scenic: bool = False
+    max_grade: float | None = None
+    min_battery_reserve_pct: float = 10.0
 
 
 @dataclass
@@ -169,10 +178,10 @@ class OrbitalNav:
         for system in self.GNSS_SYSTEMS:
             statuses.append(SatelliteStatus(
                 system=system,
-                satellites_visible=12,
-                satellites_used=10,
-                hdop=0.6,
-                pdop=0.9,
+                satellites_visible=12 + random.randint(0, 2),
+                satellites_used=10 + random.randint(0, 1),
+                hdop=0.6 + random.uniform(0, 0.1),
+                pdop=0.9 + random.uniform(0, 0.1),
                 fix_type="RTK_FIXED" if self.precision == PrecisionMode.RTK else "3D",
             ))
         self._satellites = statuses
@@ -186,6 +195,7 @@ class OrbitalNav:
         destination: Coordinate,
         mode: TransportMode = TransportMode.DRIVE,
         alternatives: int = 3,
+        preferences: RoutePreferences | None = None,
     ) -> Route:
         """
         Calculate optimal route between two coordinates.
@@ -193,6 +203,8 @@ class OrbitalNav:
         For drive/walk/bike: delegates to OSRM.
         For drone/spacecraft: uses direct great-circle + altitude planning.
         """
+        if preferences and mode == TransportMode.DRIVE and preferences.avoid_tolls:
+            alternatives = max(alternatives, 1)
         if mode in (TransportMode.DRONE, TransportMode.SPACECRAFT):
             return await self._aerial_route(origin, destination, mode)
         return await self._ground_route(origin, destination, mode, alternatives)
@@ -272,7 +284,7 @@ class OrbitalNav:
     ) -> Route:
         """Direct great-circle route for drones / spacecraft."""
         dist = origin.distance_to(destination)
-        speed_ms = 50 if mode == TransportMode.DRONE else 7800   # drone ~50m/s, spacecraft ~7.8km/s
+        speed_ms = 50 if mode == TransportMode.DRONE else 7800   # drone ~50 m/s, spacecraft ~7.8 km/s
         duration = dist / speed_ms
 
         route = Route(
@@ -316,6 +328,116 @@ class OrbitalNav:
             hazards=["OFFLINE_MODE: satellite uplink unavailable"],
             geometry=[origin, destination],
         )
+
+    def estimate_eta(self, distance_km: float, mode: TransportMode = TransportMode.DRIVE) -> float:
+        """Estimate travel time in minutes using average speed in km/h."""
+        speed_kmh = {
+            TransportMode.DRIVE: 60.0,
+            TransportMode.WALK: 5.0,
+            TransportMode.BIKE: 18.0,
+            TransportMode.DRONE: 120.0,
+            TransportMode.SUBMARINE: 40.0,
+            TransportMode.SPACECRAFT: 28_000.0,
+        }[mode]
+        if speed_kmh <= 0:
+            return float("inf")
+        return (distance_km / speed_kmh) * 60.0
+
+    def build_turn_by_turn(self, route: Route, language: str = "en") -> list[str]:
+        localized = {
+            "en": {"head": "Head", "continue": "Continue", "arrive": "Arrive at destination"},
+            "he": {"head": "התחל", "continue": "המשך", "arrive": "הגעת ליעד"},
+            "ar": {"head": "ابدأ", "continue": "تابع", "arrive": "لقد وصلت إلى الوجهة"},
+        }
+        t = localized.get(language, localized["en"])
+        if not route.waypoints:
+            return [t["arrive"]]
+        instructions: list[str] = []
+        for idx, wp in enumerate(route.waypoints):
+            if wp.instruction:
+                instructions.append(wp.instruction)
+                continue
+            if idx == 0:
+                instructions.append(f"{t['head']} to {wp.coordinate.lat:.5f},{wp.coordinate.lon:.5f}")
+            elif idx == len(route.waypoints) - 1:
+                instructions.append(t["arrive"])
+            else:
+                instructions.append(f"{t['continue']} {wp.distance_m:.0f}m")
+        return instructions
+
+    def geofence_polygon(self, point: Coordinate, polygon: list[Coordinate]) -> bool:
+        if len(polygon) < 3:
+            return False
+        inside = False
+        x, y = point.lon, point.lat
+        for i in range(len(polygon)):
+            j = (i - 1) % len(polygon)
+            xi, yi = polygon[i].lon, polygon[i].lat
+            xj, yj = polygon[j].lon, polygon[j].lat
+            intersects = ((yi > y) != (yj > y)) and (
+                x < ((xj - xi) * (y - yi) / ((yj - yi) or 1e-12) + xi)
+            )
+            if intersects:
+                inside = not inside
+        return inside
+
+    def geofence_circle(self, point: Coordinate, center: Coordinate, radius_m: float) -> bool:
+        return point.distance_to(center) <= max(0.0, radius_m)
+
+    async def route_multi_stop(
+        self,
+        origin: Coordinate,
+        stops: list[Coordinate],
+        mode: TransportMode = TransportMode.DRIVE,
+    ) -> Route:
+        if not stops:
+            return await self.route(origin, origin, mode=mode, alternatives=0)
+        ordered = self._two_opt([origin, *stops])
+        waypoints = [Waypoint(coordinate=c) for c in ordered]
+        distance = sum(ordered[i].distance_to(ordered[i + 1]) for i in range(len(ordered) - 1))
+        eta = self.estimate_eta(distance / 1000, mode=mode) * 60.0
+        return Route(
+            origin=ordered[0],
+            destination=ordered[-1],
+            waypoints=waypoints,
+            total_distance_m=distance,
+            total_duration_s=eta,
+            mode=mode,
+            precision=self.precision,
+            geometry=ordered,
+        )
+
+    def _route_length(self, coords: list[Coordinate]) -> float:
+        return sum(coords[i].distance_to(coords[i + 1]) for i in range(len(coords) - 1))
+
+    def _two_opt(self, coords: list[Coordinate]) -> list[Coordinate]:
+        if len(coords) < 4:
+            return coords
+        best = coords[:]
+        improved = True
+        while improved:
+            improved = False
+            for i in range(1, len(best) - 2):
+                for j in range(i + 1, len(best) - 1):
+                    candidate = best[:i] + best[i : j + 1][::-1] + best[j + 1 :]
+                    if self._route_length(candidate) + 1e-6 < self._route_length(best):
+                        best = candidate
+                        improved = True
+        return best
+
+    def is_route_clear(self, route: Route, blocked_centers: list[Coordinate], radius_m: float = 200) -> bool:
+        for pt in route.geometry:
+            for blocked in blocked_centers:
+                if pt.distance_to(blocked) <= radius_m:
+                    return False
+        return True
+
+    def is_route_clear_poly(self, route: Route, blocked_polygons: list[list[Coordinate]]) -> bool:
+        for pt in route.geometry:
+            for poly in blocked_polygons:
+                if self.geofence_polygon(pt, poly):
+                    return False
+        return True
 
     # ── Tracking ──────────────────────────────────────────────────────────────
 

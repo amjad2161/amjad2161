@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -68,8 +69,10 @@ class NetworkAuditResult:
 
 
 # Simplified known-bad pattern database (production: MISP / VirusTotal / etc.)
-KNOWN_MALWARE_HASHES: set[str] = {
+KNOWN_MALWARE_MD5: set[str] = {
     "d41d8cd98f00b204e9800998ecf8427e",    # empty file md5
+}
+KNOWN_MALWARE_SHA256: set[str] = {
     "e3b0c44298fc1c149afbf4c8996fb924",    # empty file sha256
 }
 
@@ -172,7 +175,7 @@ class CyberShield:
         """Check file against known-malware hashes."""
         md5 = hashlib.md5(file_bytes).hexdigest()
         sha256 = hashlib.sha256(file_bytes).hexdigest()
-        is_malware = md5 in KNOWN_MALWARE_HASHES or sha256 in KNOWN_MALWARE_HASHES
+        is_malware = md5 in KNOWN_MALWARE_MD5 or sha256 in KNOWN_MALWARE_SHA256
 
         if is_malware:
             self._record_threat(
@@ -182,6 +185,41 @@ class CyberShield:
                 {"md5": md5, "sha256": sha256},
             )
         return {"md5": md5, "sha256": sha256, "malware_detected": is_malware}
+
+    def detect_gps_spoofing(
+        self,
+        *,
+        position_jump_m: float = 0.0,
+        speed_mps: float = 0.0,
+        snr_drop_db: float = 0.0,
+        clock_bias_ms: float = 0.0,
+    ) -> dict[str, Any]:
+        """
+        Heuristic GPS spoofing detector.
+        Signals are normalized and combined into [0, 1] risk.
+        """
+        jump_score = min(1.0, max(0.0, position_jump_m / 500.0))
+        speed_score = min(1.0, max(0.0, speed_mps / 120.0))
+        snr_score = min(1.0, max(0.0, snr_drop_db / 20.0))
+        clock_score = min(1.0, max(0.0, math.fabs(clock_bias_ms) / 100.0))
+        risk = min(1.0, (jump_score + speed_score + snr_score + clock_score) / 4.0)
+        spoofed = risk >= 0.5
+        if spoofed:
+            self._record_threat(
+                ThreatType.MAN_IN_THE_MIDDLE,
+                ThreatLevel.HIGH,
+                "0.0.0.0",
+                "gnss",
+                "Potential GPS spoofing indicators detected",
+                {
+                    "position_jump_m": position_jump_m,
+                    "speed_mps": speed_mps,
+                    "snr_drop_db": snr_drop_db,
+                    "clock_bias_ms": clock_bias_ms,
+                    "risk_score": risk,
+                },
+            )
+        return {"spoofing_detected": spoofed, "risk_score": round(risk, 3)}
 
     # ── Message Integrity (HMAC) ──────────────────────────────────────────────
 

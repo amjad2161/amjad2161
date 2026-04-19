@@ -27,7 +27,7 @@ def test_health(client):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 9
+    assert len(data["modules"]) == 12
     for mod_status in data["modules"].values():
         assert mod_status == "ONLINE"
     assert data["uptime_s"] >= 0
@@ -40,6 +40,7 @@ def test_diagnostics(client):
     expected_modules = [
         "neuro_core", "orbital_nav", "satlink", "sonic_matrix",
         "nexus_sync", "telemetry_hub", "cyber_shield", "creative_engine", "omni_vision",
+        "ins", "medical_protocols", "localization",
     ]
     for mod in expected_modules:
         assert mod in data
@@ -74,6 +75,24 @@ def test_route_drone(client):
     assert data["distance_km"] > 0
     assert data["eta_minutes"] > 0
     assert data["mode"] == "drone"
+
+
+def test_eta_with_conditions(client):
+    r = client.post(
+        "/api/v1/nav/eta-with-conditions",
+        json={"distance_km": 10, "mode": "driving", "weather_factor": 1.1, "traffic_factor": 1.2},
+    )
+    assert r.status_code == 200
+    assert r.json()["eta_minutes"] > 0
+
+
+def test_battery_check(client):
+    r = client.post(
+        "/api/v1/nav/battery-check",
+        json={"battery_pct": 50, "distance_km": 10, "consumption_pct_per_km": 2, "reserve_pct": 10},
+    )
+    assert r.status_code == 200
+    assert "can_complete" in r.json()
 
 
 # ── SOS ───────────────────────────────────────────────────────────────────────
@@ -153,6 +172,27 @@ def test_audit_config(client):
     data = r.json()
     assert data["risk_score"] > 0
     assert len(data["vulnerabilities"]) > 0
+
+
+def test_detect_gps_spoofing(client):
+    r = client.post("/api/v1/security/detect-gps-spoofing", json={"position_jump_m": 1200})
+    assert r.status_code == 200
+    assert "risk_score" in r.json()
+
+
+def test_medical_triage_and_dose(client):
+    triage = client.post(
+        "/api/v1/medical/triage",
+        json={"heart_rate": 180, "systolic_bp": 90, "spo2": 86},
+    )
+    assert triage.status_code == 200
+    assert triage.json()["priority"] in {"RED", "YELLOW", "GREEN", "BLACK"}
+    dose = client.post(
+        "/api/v1/medical/dose",
+        json={"medication": "test", "weight_kg": 20, "mg_per_kg": 2, "min_mg": 10},
+    )
+    assert dose.status_code == 200
+    assert "actual_dose_mg" in dose.json()
 
 
 # ── Creative Engine ───────────────────────────────────────────────────────────

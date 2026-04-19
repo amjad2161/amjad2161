@@ -28,7 +28,7 @@ class RouteRequest(BaseModel):
     origin_lon: float
     dest_lat: float
     dest_lon: float
-    mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|spacecraft)$")
+    mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|spacecraft|submarine)$")
     alternatives: int = Field(3, ge=0, le=5)
 
 class RouteResponse(BaseModel):
@@ -119,6 +119,47 @@ class PublishRequest(BaseModel):
 
 
 # ── Generic ───────────────────────────────────────────────────────────────────
+
+class ETAWithConditionsRequest(BaseModel):
+    distance_km: float = Field(..., ge=0)
+    mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|spacecraft|submarine)$")
+    weather_factor: float = Field(1.0, ge=0.1, le=10.0)
+    traffic_factor: float = Field(1.0, ge=0.1, le=10.0)
+
+
+class BatteryCheckRequest(BaseModel):
+    battery_pct: float = Field(..., ge=0.0, le=100.0)
+    distance_km: float = Field(..., ge=0.0)
+    consumption_pct_per_km: float = Field(1.0, gt=0.0)
+    reserve_pct: float = Field(10.0, ge=0.0, le=100.0)
+
+
+class MedicalTriageRequest(BaseModel):
+    heart_rate: float
+    systolic_bp: float
+    spo2: float
+
+
+class MedicalDoseRequest(BaseModel):
+    medication: str
+    weight_kg: float = Field(..., gt=0)
+    mg_per_kg: float = Field(..., gt=0)
+    min_mg: float = Field(0.0, ge=0.0)
+    max_mg: float | None = Field(default=None, gt=0)
+
+
+class GPSSpoofingRequest(BaseModel):
+    position_jump_m: float = 0.0
+    speed_mps: float = 0.0
+    snr_drop_db: float = 0.0
+    clock_bias_ms: float = 0.0
+
+
+class CorridorCheckRequest(BaseModel):
+    point_lat: float
+    point_lon: float
+    corridor: list[tuple[float, float]]
+    width_m: float = Field(..., ge=0.0)
 
 class HealthResponse(BaseModel):
     status: str
