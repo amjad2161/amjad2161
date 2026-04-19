@@ -531,6 +531,165 @@ class OrbitalNav:
         """
         return base_eta_seconds * max(0.1, traffic_factor) * max(0.1, weather_factor)
 
+    @staticmethod
+    def predict_traffic_factor(hour_of_day: int, weekday: int = 0) -> float:
+        """
+        Simple time-of-day traffic model.
+
+        Returns a multiplier to apply to base ETA:
+          - Weekday morning peak (07-10):  1.7
+          - Weekday evening peak (16-19):  1.9
+          - Weekday mid-day  (10-16):      1.2
+          - Weekday night (22-05):         0.95
+          - Weekend daytime:               1.1
+          - Default:                       1.0
+
+        weekday: 0=Mon .. 6=Sun
+        """
+        if not (0 <= hour_of_day <= 23):
+            return 1.0
+        is_weekend = weekday >= 5
+        if is_weekend:
+            return 1.1 if 9 <= hour_of_day <= 20 else 0.95
+        if 7 <= hour_of_day < 10:
+            return 1.7
+        if 16 <= hour_of_day < 19:
+            return 1.9
+        if 10 <= hour_of_day < 16:
+            return 1.2
+        if hour_of_day >= 22 or hour_of_day < 5:
+            return 0.95
+        return 1.0
+
+    # ── Battery / Range Awareness (Drone / EV) ───────────────────────────────
+
+    @staticmethod
+    def estimate_battery_usage(
+        distance_m: float,
+        mode: TransportMode,
+        battery_wh_per_km: float | None = None,
+        wind_factor: float = 1.0,
+    ) -> dict[str, float]:
+        """
+        Estimate energy consumption for a route.
+
+        Typical consumption (Wh per km):
+          - Drone (small):        250
+          - Drone (cargo):        500
+          - EV (car):             150
+          - Submarine:            800
+          - Spacecraft:           N/A (fuel, not battery)
+
+        Returns dict with wh_used, range_km (based on 1kWh battery reference),
+        and percentage used of a reference battery (1000 Wh by default).
+        """
+        defaults = {
+            TransportMode.DRONE:      250.0,
+            TransportMode.DRIVE:      150.0,
+            TransportMode.SUBMARINE:  800.0,
+            TransportMode.BIKE:       8.0,
+            TransportMode.WALK:       4.0,
+            TransportMode.SPACECRAFT: 0.0,
+        }
+        consumption = battery_wh_per_km if battery_wh_per_km is not None else defaults.get(mode, 200.0)
+        distance_km = distance_m / 1000
+        wh_used = distance_km * consumption * max(0.5, wind_factor)
+        reference_battery_wh = 1000.0
+        return {
+            "wh_used": round(wh_used, 2),
+            "distance_km": round(distance_km, 2),
+            "wh_per_km": consumption,
+            "wind_factor": wind_factor,
+            "percent_of_1kwh": round((wh_used / reference_battery_wh) * 100, 2),
+        }
+
+    def is_within_range(
+        self,
+        route: Route,
+        battery_wh_available: float,
+        mode: TransportMode | None = None,
+        wind_factor: float = 1.0,
+        reserve_percent: float = 20.0,
+    ) -> dict[str, Any]:
+        """
+        Check if a route is completable with the available battery.
+
+        reserve_percent: safety reserve (default 20%) — route fails if consumption
+        exceeds (100 - reserve) % of available.
+        """
+        usage = self.estimate_battery_usage(
+            route.total_distance_m, mode or route.mode, wind_factor=wind_factor,
+        )
+        available_usable = battery_wh_available * (1 - reserve_percent / 100)
+        feasible = usage["wh_used"] <= available_usable
+        return {
+            "feasible": feasible,
+            "wh_used": usage["wh_used"],
+            "wh_available": battery_wh_available,
+            "wh_reserve_required": round(battery_wh_available - available_usable, 2),
+            "wh_margin": round(available_usable - usage["wh_used"], 2),
+            "reserve_percent": reserve_percent,
+        }
+
+    # ── Turn-by-Turn Instruction Generation ──────────────────────────────────
+
+    def build_turn_by_turn(
+        self,
+        route: Route,
+        lang: str = "en",
+    ) -> list[dict[str, Any]]:
+        """
+        Generate localized turn-by-turn instructions from route waypoints.
+
+        Returns a list of {distance_m, bearing_change, instruction, lat, lon} dicts.
+        Supports en/he/ar with RTL awareness.
+        """
+        from brainiac.core.localization import Localization
+
+        loc = Localization(lang=lang)
+        instructions: list[dict[str, Any]] = []
+
+        if not route.waypoints:
+            return [{
+                "distance_m": route.total_distance_m,
+                "bearing_change": 0.0,
+                "instruction": loc.arrival(),
+                "lat": route.destination.lat,
+                "lon": route.destination.lon,
+            }]
+
+        prev_bearing = route.origin.bearing_to(route.waypoints[0].coordinate)
+        prev_coord = route.origin
+
+        for i, wp in enumerate(route.waypoints):
+            dist_m = prev_coord.distance_to(wp.coordinate)
+            if i + 1 < len(route.waypoints):
+                next_bearing = wp.coordinate.bearing_to(route.waypoints[i + 1].coordinate)
+            else:
+                next_bearing = wp.coordinate.bearing_to(route.destination)
+            delta = next_bearing - prev_bearing
+            instr = loc.turn_instruction(delta, dist_m, road=wp.instruction or None)
+            instructions.append({
+                "distance_m": round(dist_m, 1),
+                "bearing_change": round(delta, 1),
+                "instruction": instr,
+                "lat": wp.coordinate.lat,
+                "lon": wp.coordinate.lon,
+            })
+            prev_bearing = next_bearing
+            prev_coord = wp.coordinate
+
+        # Final arrival
+        final_dist = prev_coord.distance_to(route.destination)
+        instructions.append({
+            "distance_m": round(final_dist, 1),
+            "bearing_change": 0.0,
+            "instruction": loc.arrival(),
+            "lat": route.destination.lat,
+            "lon": route.destination.lon,
+        })
+        return instructions
+
     # ── ETA-only (fast path, no full route computation) ──────────────────────
 
     def estimate_eta(

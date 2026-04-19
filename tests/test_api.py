@@ -195,6 +195,73 @@ def test_register_and_list_device(client):
     assert "test-drone-001" in ids
 
 
+# ── Navigation Enhancements ───────────────────────────────────────────────────
+
+def test_turn_by_turn_en(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=en", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["lang"] == "en"
+    assert data["is_rtl"] is False
+    assert len(data["instructions"]) >= 1
+
+
+def test_turn_by_turn_hebrew_rtl(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=he", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["lang"] == "he"
+    assert data["is_rtl"] is True
+
+
+def test_turn_by_turn_rejects_invalid_lang(client):
+    r = client.post("/api/v1/nav/turn-by-turn?lang=zz", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 400
+
+
+def test_eta_with_conditions_applies_traffic(client):
+    r = client.post(
+        "/api/v1/nav/eta-with-conditions"
+        "?origin_lat=32.0&origin_lon=34.0&dest_lat=33.0&dest_lon=35.0"
+        "&mode=driving&hour=8&weekday=1"
+    )
+    assert r.status_code == 200
+    data = r.json()
+    # Weekday 08:00 should trigger morning rush multiplier (1.7)
+    assert data["traffic_factor"] == 1.7
+    assert data["adjusted_duration_s"] > data["duration_s"]
+
+
+def test_battery_check_feasible(client):
+    r = client.post("/api/v1/nav/battery-check?battery_wh=10000", json={
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.01, "dest_lon": 34.01,
+        "mode": "drone", "alternatives": 0,
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["feasible"] is True
+
+
+def test_nav_viewer_served(client):
+    r = client.get("/nav")
+    assert r.status_code == 200
+    assert "<!doctype html>" in r.text.lower()
+    assert "BRAINIAC NAV" in r.text
+
+
 # ── Security Middleware ───────────────────────────────────────────────────────
 
 def test_security_headers(client):

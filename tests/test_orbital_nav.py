@@ -307,3 +307,135 @@ def test_estimate_eta_returns_correct_keys():
     assert "speed_kmh" in result
     assert result["distance_m"] > 0
     assert result["duration_s"] > 0
+
+
+# ── Traffic Prediction ───────────────────────────────────────────────────────
+
+def test_traffic_weekday_morning_peak():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=8, weekday=1) == 1.7
+
+
+def test_traffic_weekday_evening_peak():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=17, weekday=2) == 1.9
+
+
+def test_traffic_weekday_midday():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=12, weekday=3) == 1.2
+
+
+def test_traffic_weekday_night():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=3, weekday=1) == 0.95
+
+
+def test_traffic_weekend():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=14, weekday=6) == 1.1
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=3, weekday=6) == 0.95
+
+
+def test_traffic_invalid_hour_returns_neutral():
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=-1) == 1.0
+    assert OrbitalNav.predict_traffic_factor(hour_of_day=99) == 1.0
+
+
+# ── Battery / Range ──────────────────────────────────────────────────────────
+
+def test_battery_usage_drone():
+    usage = OrbitalNav.estimate_battery_usage(
+        distance_m=10_000, mode=TransportMode.DRONE,
+    )
+    assert usage["wh_used"] == pytest.approx(2500.0)
+    assert usage["distance_km"] == 10.0
+
+
+def test_battery_usage_ev():
+    usage = OrbitalNav.estimate_battery_usage(
+        distance_m=50_000, mode=TransportMode.DRIVE,
+    )
+    assert usage["wh_used"] == pytest.approx(7500.0)
+
+
+def test_battery_usage_wind_penalty():
+    normal = OrbitalNav.estimate_battery_usage(
+        distance_m=10_000, mode=TransportMode.DRONE, wind_factor=1.0,
+    )
+    windy = OrbitalNav.estimate_battery_usage(
+        distance_m=10_000, mode=TransportMode.DRONE, wind_factor=1.5,
+    )
+    assert windy["wh_used"] > normal["wh_used"]
+
+
+def test_battery_usage_custom_rate():
+    usage = OrbitalNav.estimate_battery_usage(
+        distance_m=1000, mode=TransportMode.DRIVE, battery_wh_per_km=100.0,
+    )
+    assert usage["wh_used"] == pytest.approx(100.0)
+
+
+def test_is_within_range_feasible():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=32.01, lon=34.01),
+        waypoints=[],
+        total_distance_m=5000,  # 5 km
+        total_duration_s=60,
+        mode=TransportMode.DRONE,
+        precision=PrecisionMode.RTK,
+    )
+    # 5 km @ 250 Wh/km = 1250 Wh used. With 2000 Wh battery + 20% reserve:
+    # usable = 1600 Wh, margin = 350 Wh ✓
+    result = nav.is_within_range(route, battery_wh_available=2000)
+    assert result["feasible"] is True
+    assert result["wh_margin"] > 0
+
+
+def test_is_within_range_infeasible():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[],
+        total_distance_m=100_000,  # 100 km
+        total_duration_s=1800,
+        mode=TransportMode.DRONE,
+        precision=PrecisionMode.RTK,
+    )
+    # 100 km @ 250 Wh/km = 25,000 Wh >> 5,000 Wh available
+    result = nav.is_within_range(route, battery_wh_available=5000)
+    assert result["feasible"] is False
+    assert result["wh_margin"] < 0
+
+
+# ── Turn-by-Turn ─────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_turn_by_turn_empty_waypoints_returns_arrival_only():
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0, lon=34.0)
+    dest   = Coordinate(lat=32.001, lon=34.001)
+    route = Route(
+        origin=origin, destination=dest, waypoints=[],
+        total_distance_m=150, total_duration_s=30,
+        mode=TransportMode.DRIVE, precision=PrecisionMode.RTK,
+    )
+    steps = nav.build_turn_by_turn(route, lang="en")
+    assert len(steps) == 1
+    assert "arrived" in steps[0]["instruction"]
+
+
+@pytest.mark.asyncio
+async def test_turn_by_turn_hebrew_rtl():
+    from brainiac.core.orbital_nav import Waypoint
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0, lon=34.0)
+    dest   = Coordinate(lat=32.002, lon=34.002)
+    route = Route(
+        origin=origin, destination=dest,
+        waypoints=[Waypoint(coordinate=Coordinate(lat=32.001, lon=34.001))],
+        total_distance_m=300, total_duration_s=60,
+        mode=TransportMode.DRIVE, precision=PrecisionMode.RTK,
+    )
+    steps = nav.build_turn_by_turn(route, lang="he")
+    assert len(steps) >= 2
+    # At least one Hebrew character in the result
+    assert any("\u05D0" <= c <= "\u05EA" for s in steps for c in s["instruction"])

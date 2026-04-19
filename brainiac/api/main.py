@@ -15,7 +15,9 @@ from typing import AsyncIterator
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, StreamingResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
@@ -88,6 +90,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Static frontend (map viewer) ──────────────────────────────────────────────
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+@app.get("/nav", include_in_schema=False)
+async def nav_viewer():
+    """Serve the interactive map viewer."""
+    index = _STATIC_DIR / "nav.html"
+    if not index.exists():
+        raise HTTPException(status_code=404, detail="Map viewer not installed")
+    return FileResponse(str(index), media_type="text/html")
 
 
 # ── Security middleware ───────────────────────────────────────────────────────
@@ -275,6 +292,94 @@ async def get_position():
         "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
         "satellites": [{"system": s.system, "fix": s.fix_type, "hdop": s.hdop} for s in sats],
     }
+
+
+@app.post("/api/v1/nav/turn-by-turn", tags=["ORBITAL-NAV"])
+async def turn_by_turn(req: RouteRequest, lang: str = "en"):
+    """Generate localized turn-by-turn directions. Supports en/he/ar (RTL)."""
+    if lang not in ("en", "he", "ar"):
+        raise HTTPException(status_code=400, detail="lang must be one of: en, he, ar")
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    mode   = TransportMode(req.mode)
+    route  = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
+    instructions = nav.build_turn_by_turn(route, lang=lang)
+    return {
+        "lang": lang,
+        "is_rtl": lang in ("he", "ar"),
+        "total_distance_m": route.total_distance_m,
+        "total_duration_s": route.total_duration_s,
+        "instructions": instructions,
+    }
+
+
+@app.post("/api/v1/nav/eta-with-conditions", tags=["ORBITAL-NAV"])
+async def eta_with_conditions(
+    origin_lat: float, origin_lon: float,
+    dest_lat: float, dest_lon: float,
+    mode: str = "driving",
+    hour: int | None = None, weekday: int = 0,
+    weather_factor: float = 1.0,
+):
+    """Fast ETA with time-of-day traffic prediction + weather adjustment."""
+    origin = Coordinate(lat=origin_lat, lon=origin_lon)
+    dest   = Coordinate(lat=dest_lat,   lon=dest_lon)
+    tmode  = TransportMode(mode)
+    est = nav.estimate_eta(origin, dest, mode=tmode)
+    traffic_factor = 1.0
+    if hour is not None:
+        traffic_factor = nav.predict_traffic_factor(hour, weekday)
+    adjusted = nav.adjust_eta_for_conditions(
+        est["duration_s"], traffic_factor=traffic_factor, weather_factor=weather_factor,
+    )
+    return {
+        **est,
+        "traffic_factor": traffic_factor,
+        "weather_factor": weather_factor,
+        "adjusted_duration_s": round(adjusted, 1),
+        "adjusted_eta_minutes": round(adjusted / 60, 1),
+    }
+
+
+@app.post("/api/v1/nav/battery-check", tags=["ORBITAL-NAV"])
+async def battery_check(
+    req: RouteRequest,
+    battery_wh: float,
+    wind_factor: float = 1.0,
+    reserve_percent: float = 20.0,
+):
+    """Check whether a planned route is feasible with available battery."""
+    origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
+    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
+    tmode  = TransportMode(req.mode)
+    route_obj = await nav.route(origin, dest, mode=tmode, alternatives=0)
+    return nav.is_within_range(
+        route_obj, battery_wh_available=battery_wh,
+        wind_factor=wind_factor, reserve_percent=reserve_percent,
+    )
+
+
+@app.websocket("/api/v1/nav/ws/position")
+async def ws_position(websocket: WebSocket, interval_s: float = 1.0):
+    """Live GPS position stream over WebSocket. Closes cleanly on disconnect."""
+    interval = max(0.1, min(10.0, interval_s))
+    await websocket.accept()
+    try:
+        while True:
+            pos = await nav.get_position()
+            await websocket.send_json({
+                "lat": pos.lat, "lon": pos.lon, "alt_m": pos.alt_m,
+                "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
+            })
+            await asyncio.sleep(interval)
+    except WebSocketDisconnect:
+        log.info("ws.position.disconnect")
+    except Exception as exc:
+        log.warning("ws.position.error", error=str(exc))
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 # ── SATLINK SOS ───────────────────────────────────────────────────────────────
