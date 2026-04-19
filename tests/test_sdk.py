@@ -1,4 +1,4 @@
-"""Tests for the BRAINIAC SDK client (uses FastAPI TestClient + httpx-mock pattern)."""
+"""Tests for the G.A.N.E SDK client (uses FastAPI TestClient + httpx-mock pattern)."""
 import asyncio
 import pytest
 import httpx

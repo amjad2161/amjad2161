@@ -1,4 +1,4 @@
-"""Tests for the BRAINIAC CLI entry points."""
+"""Tests for the G.A.N.E CLI entry points."""
 import sys
 import pytest
 from unittest.mock import patch

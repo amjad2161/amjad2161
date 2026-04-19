@@ -1,11 +1,11 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# BRAINIAC AI — Master System Configuration
+# G.A.N.E — Master System Configuration
 # ═══════════════════════════════════════════════════════════════════════════════
 
 system:
-  name: "BRAINIAC"
-  version: "1.0.0"
-  codename: "GENESIS"
+  name: "G.A.N.E"
+  version: "2.1.0"
+  codename: "GANE"
   intelligence_tier: "ASI"
   autonomy_level: "FULL"
   log_level: "INFO"
@@ -19,7 +19,7 @@ api:
   reload: false
   cors_origins:
     - "http://localhost:3000"
-    - "https://brainiac.ai"
+    - "https://gane.ai"
   rate_limit:
     requests_per_minute: 1000
     burst: 200

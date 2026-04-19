@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BRAINIAC Benchmark Suite
+G.A.N.E Benchmark Suite
 =========================
 Real latency and throughput numbers for every module — no mocks.
 Run with:  python scripts/benchmark.py
@@ -228,7 +228,7 @@ def bench_creative_engine():
 async def main() -> None:
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
-║             BRAINIAC PERFORMANCE BENCHMARKS                      ║
+║             G.A.N.E PERFORMANCE BENCHMARKS                       ║
 ║         Real numbers — no mocks, no network calls                ║
 ╚══════════════════════════════════════════════════════════════════╝
 """)

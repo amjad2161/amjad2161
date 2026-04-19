@@ -102,7 +102,7 @@ class SatLink:
         BroadcastChannel.INMARSAT,
     ]
 
-    def __init__(self, node_id: str = "BRAINIAC-NODE-001") -> None:
+    def __init__(self, node_id: str = "GANE-NODE-001") -> None:
         self.node_id = node_id
         self._incidents: dict[str, SOSPacket] = {}
         self._uplink_active = False
@@ -204,7 +204,7 @@ class SatLink:
 
     async def _notify_responders(self, packet: SOSPacket) -> list[str]:
         """Alert emergency services and designated contacts."""
-        responders = ["EMERGENCY_SERVICES", "LOCAL_RESCUE", "BRAINIAC_DISPATCH"]
+        responders = ["EMERGENCY_SERVICES", "LOCAL_RESCUE", "GANE_DISPATCH"]
         await asyncio.sleep(0.02)          # simulate notification dispatch
         return responders
 

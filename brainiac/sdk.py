@@ -1,7 +1,7 @@
 """
-BRAINIAC Python SDK Client
-===========================
-A clean, async-friendly client for talking to a running BRAINIAC API server.
+G.A.N.E Python SDK Client
+==========================
+A clean, async-friendly client for talking to a running G.A.N.E API server.
 
 Example
 -------
@@ -21,7 +21,7 @@ import httpx
 
 
 class BrainiacClient:
-    """Async client for the BRAINIAC REST API."""
+    """Async client for the G.A.N.E REST API."""
 
     def __init__(
         self,
@@ -31,7 +31,7 @@ class BrainiacClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        headers = {"User-Agent": "brainiac-sdk/1.0.0"}
+        headers = {"User-Agent": "gane-sdk/2.1.0"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         self._client = httpx.AsyncClient(

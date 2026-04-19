@@ -1,5 +1,5 @@
 """
-BRAINIAC ORCHESTRATOR — Master System Controller
+G.A.N.E ORCHESTRATOR — Master System Controller
 ==================================================
 Unifies all 12 core modules into a single cohesive autonomous intelligence.
 Provides mission planning, auto-wiring, self-healing, and high-level
@@ -76,7 +76,7 @@ class HealthReport:
 
 class Brainiac:
     """
-    Master orchestrator — the brain behind BRAINIAC.
+    Master orchestrator — the brain behind G.A.N.E.
 
     Features
     --------
@@ -104,7 +104,7 @@ class Brainiac:
         self.satlink  = SatLink()
         self.nexus    = NexusSync()
         self.telem    = TelemetryHub()
-        self.shield   = CyberShield(secret_key=secret_key or "BRAINIAC-ORCHESTRATOR")
+        self.shield   = CyberShield(secret_key=secret_key or "GANE-ORCHESTRATOR")
         self.creative = CreativeEngine()
         self.vision   = OmniVision()
         self.localization = Localization()
@@ -162,7 +162,7 @@ class Brainiac:
                     message=f"Auto-triggered SOS: {anomaly.anomaly_type.value} "
                             f"on {anomaly.sensor_id} (severity {anomaly.severity:.2f})",
                     priority=SOSPriority.DISTRESS,
-                    sender_id="BRAINIAC_AUTO",
+                    sender_id="GANE_AUTO",
                 )
 
         self.telem.on_anomaly(on_critical_anomaly)
@@ -186,7 +186,7 @@ class Brainiac:
     # ── Unified High-Level Operations ─────────────────────────────────────────
 
     async def ask(self, question: str, depth: str = "standard") -> str:
-        """Ask BRAINIAC a question — delegates to NEURO-CORE."""
+        """Ask G.A.N.E a question — delegates to NEURO-CORE."""
         thought = await self.neuro.think(question, depth=ReasoningDepth(depth))
         return thought.content
 
@@ -270,7 +270,7 @@ class Brainiac:
         # 1. Broadcast SOS
         packet = await self.satlink.send_sos(
             lat=lat, lon=lon, message=message, priority=priority,
-            sender_id="BRAINIAC_ORCHESTRATOR",
+            sender_id="GANE_ORCHESTRATOR",
         )
 
         # 2. Dispatch any registered rescue drone

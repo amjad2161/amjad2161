@@ -120,7 +120,7 @@ async def test_navigation_integrated_with_shield():
 async def test_sonic_translates_nav_instructions():
     """Navigation instructions can be translated via SONIC-MATRIX."""
     sonic = SonicMatrix()
-    detected = sonic.detect_language("Turn left in 200 meters")
+    detected = sonic.detect_language("Please turn left in 200 meters and continue straight for one kilometer.")
     assert detected["language"] == "en"
 
 

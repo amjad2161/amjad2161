@@ -1,4 +1,4 @@
-"""Tests for the BRAINIAC master orchestrator."""
+"""Tests for the G.A.N.E master orchestrator."""
 import pytest
 from brainiac import (
     Brainiac, Mission, MissionType, SystemState,

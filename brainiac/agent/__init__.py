@@ -1,4 +1,4 @@
-"""GANE Agent Layer — Autonomous Multi-Agent System built on BRAINIAC."""
+"""GANE Agent Layer — Autonomous Multi-Agent System built on G.A.N.E."""
 from .base import BaseAgent
 from .memory import AgentMemory, Decision, Episode, Fact, FactSource
 from .tools import ToolDef, ToolRegistry, ToolResult

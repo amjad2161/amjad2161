@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "brainiac"
-version = "1.0.0"
-description = "BRAINIAC AI — Autonomous Super Intelligence System"
+version = "2.1.0"
+description = "G.A.N.E — Global Autonomous Navigation Engine"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

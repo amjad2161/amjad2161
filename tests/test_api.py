@@ -1,4 +1,4 @@
-"""Integration tests for BRAINIAC REST API."""
+"""Integration tests for the G.A.N.E REST API."""
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,7 +18,7 @@ def test_root(client):
     r = client.get("/")
     assert r.status_code == 200
     data = r.json()
-    assert data["system"] == "BRAINIAC AI"
+    assert data["system"] == "G.A.N.E"
     assert data["status"] == "ONLINE"
 
 
@@ -259,7 +259,7 @@ def test_nav_viewer_served(client):
     r = client.get("/nav")
     assert r.status_code == 200
     assert "<!doctype html>" in r.text.lower()
-    assert "BRAINIAC NAV" in r.text
+    assert "G.A.N.E NAV" in r.text
 
 
 # ── Security Middleware ───────────────────────────────────────────────────────
@@ -324,6 +324,6 @@ def test_security_headers(client):
     r = client.get("/")
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
-    assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+    assert "GANE" in r.headers.get("X-GANE-Node", "")
     assert r.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
     assert r.headers.get("Permissions-Policy") is not None

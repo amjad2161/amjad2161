@@ -1,7 +1,7 @@
 """
 NEXUS-SYNC — Universal Integration Hub
 ========================================
-Connects BRAINIAC to IoT, industrial SCADA, vehicles, smart cities,
+Connects G.A.N.E to IoT, industrial SCADA, vehicles, smart cities,
 medical devices, drones — via MQTT, WebSocket, REST, gRPC, OPC-UA.
 """
 from __future__ import annotations
@@ -80,7 +80,7 @@ class Message:
 
 class NexusSync:
     """
-    Universal integration hub for BRAINIAC.
+    Universal integration hub for G.A.N.E.
 
     Manages connections to 100,000+ concurrent devices across all protocols.
     Provides unified publish/subscribe, command dispatch, and device registry.

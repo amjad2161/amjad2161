@@ -1,5 +1,5 @@
 """
-BRAINIAC LOCALIZATION — RTL-aware turn-by-turn phrasing.
+G.A.N.E LOCALIZATION — RTL-aware turn-by-turn phrasing.
 
 Provides localized navigation phrases in English, Hebrew (RTL), and Arabic (RTL),
 with distance/direction formatting appropriate to each locale.

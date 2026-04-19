@@ -1,1 +1,1 @@
-"""BRAINIAC REST + WebSocket API."""
+"""G.A.N.E REST + WebSocket API."""

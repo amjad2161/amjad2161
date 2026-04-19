@@ -31,7 +31,7 @@ log = structlog.get_logger("brainiac.agent.agents")
 # ── Telemetry Analyst Agent ───────────────────────────────────────────────────
 
 _TELEMETRY_SYSTEM = """\
-You are GANE Telemetry Analyst — an expert sensor data engineer embedded in BRAINIAC.
+You are GANE Telemetry Analyst — an expert sensor data engineer embedded in G.A.N.E.
 
 Your job:
 1. Analyze incoming telemetry streams for anomalies (spikes, drops, flatlines).
@@ -158,7 +158,7 @@ class TelemetryAnalystAgent(BaseAgent):
 # ── Medical Content Agent ─────────────────────────────────────────────────────
 
 _MEDICAL_SYSTEM = """\
-You are GANE Medical Content — an expert medical educator embedded in BRAINIAC.
+You are GANE Medical Content — an expert medical educator embedded in G.A.N.E.
 
 Specializations:
 - AHA (American Heart Association) resuscitation guidelines (ACLS/BLS/PALS)
@@ -344,7 +344,7 @@ class MedicalContentAgent(BaseAgent):
 # ── Navigation Agent ──────────────────────────────────────────────────────────
 
 _NAVIGATION_SYSTEM = """\
-You are GANE Navigation — an expert satellite-fused navigation specialist embedded in BRAINIAC.
+You are GANE Navigation — an expert satellite-fused navigation specialist embedded in G.A.N.E.
 
 Capabilities:
 - Multi-modal routing (drive, walk, bike, drone, spacecraft, submarine)

@@ -1,6 +1,6 @@
 """
-BRAINIAC API — FastAPI Application Entry Point
-===============================================
+G.A.N.E API — FastAPI Application Entry Point
+==============================================
 All 12 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
@@ -79,9 +79,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="BRAINIAC AI",
-    description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.0.0",
+    title="G.A.N.E — Global Autonomous Navigation Engine",
+    description="Global Autonomous Navigation Engine — REST + WebSocket API",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -149,7 +149,7 @@ async def security_middleware(request: Request, call_next):
                 pass
 
     response = await call_next(request)
-    response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
+    response.headers["X-GANE-Node"] = "GANE-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
@@ -162,7 +162,7 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.0.0"}
+    return {"system": "G.A.N.E", "status": "ONLINE", "version": "2.1.0"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
