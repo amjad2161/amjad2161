@@ -300,7 +300,14 @@ class OrbitalNav:
     ) -> Route:
         """Offline fallback: straight-line estimate when no network."""
         dist = origin.distance_to(destination)
-        speed = {"driving": 14, "walking": 1.4, "cycling": 5.5}.get(mode.value, 14)
+        speed = {
+            "driving": 14.0,
+            "walking": 1.4,
+            "cycling": 5.5,
+            "drone": 50.0,
+            "submarine": 8.0,
+            "spacecraft": 7_800.0,
+        }.get(mode.value, 14.0)
         return Route(
             origin=origin,
             destination=destination,

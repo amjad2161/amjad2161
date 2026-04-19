@@ -1,7 +1,8 @@
 """Integration tests for BRAINIAC REST API."""
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture
@@ -74,6 +75,17 @@ def test_route_drone(client):
     assert data["distance_km"] > 0
     assert data["eta_minutes"] > 0
     assert data["mode"] == "drone"
+
+
+def test_route_submarine(client):
+    payload = {
+        "origin_lat": 32.0, "origin_lon": 34.0,
+        "dest_lat": 32.1, "dest_lon": 34.1,
+        "mode": "submarine",
+    }
+    r = client.post("/api/v1/nav/route", json=payload)
+    assert r.status_code == 200
+    assert r.json()["mode"] == "submarine"
 
 
 # ── SOS ───────────────────────────────────────────────────────────────────────
@@ -202,3 +214,17 @@ def test_security_headers(client):
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+    assert r.headers.get("X-Request-Id")
+
+
+def test_request_id_passthrough(client):
+    req_id = "req-test-123"
+    r = client.get("/", headers={"X-Request-Id": req_id})
+    assert r.status_code == 200
+    assert r.headers.get("X-Request-Id") == req_id
+
+
+def test_request_body_too_large(client):
+    headers = {"Content-Length": str((10 * 1024 * 1024) + 1)}
+    r = client.post("/api/v1/vision/info", content=b"x", headers=headers)
+    assert r.status_code == 413

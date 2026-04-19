@@ -9,12 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 import anthropic
 import structlog
@@ -66,8 +65,8 @@ class NeuroCore:
     """
 
     MODELS = {
-        ReasoningDepth.DEEP:     "claude-opus-4-6",
-        ReasoningDepth.STANDARD: "claude-sonnet-4-6",
+        ReasoningDepth.DEEP:     "claude-opus-4-5",
+        ReasoningDepth.STANDARD: "claude-sonnet-4-5",
         ReasoningDepth.FAST:     "claude-haiku-4-5-20251001",
     }
 

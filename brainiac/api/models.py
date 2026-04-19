@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # ── NEURO-CORE ────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ class RouteRequest(BaseModel):
     origin_lon: float
     dest_lat: float
     dest_lon: float
-    mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|spacecraft)$")
+    mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|submarine|spacecraft)$")
     alternatives: int = Field(3, ge=0, le=5)
 
 class RouteResponse(BaseModel):
