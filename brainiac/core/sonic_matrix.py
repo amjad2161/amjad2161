@@ -67,6 +67,8 @@ LANGUAGE_MAP = {
     "pl": "Polish", "sv": "Swedish", "da": "Danish", "fi": "Finnish",
     "uk": "Ukrainian", "cs": "Czech", "ro": "Romanian", "hu": "Hungarian",
 }
+_LATIN_TEXT_RE = re.compile(r"[A-Za-z0-9\s,.'\-!?():;]+")
+_EN_NAV_HINTS = ("turn", "left", "right", "meter", "meters", "destination", "continue", "exit")
 
 
 class SonicMatrix:
@@ -93,20 +95,22 @@ class SonicMatrix:
 
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
+        normalized = (text or "").strip()
         try:
             from langdetect import detect, detect_langs
-            lang = detect(text)
-            probabilities = detect_langs(text)
+            lang = detect(normalized)
+            probabilities = detect_langs(normalized)
             # langdetect can misclassify short ASCII navigation phrases
             # ("Turn left in 200 meters") as Dutch. Prefer English fallback
             # for plain Latin text when confidence is weak.
             if (
                 lang != "en"
                 and self.default_lang == "en"
-                and re.fullmatch(r"[A-Za-z0-9\s,.'\-!?():;/]+", text or "")
-                and len(text.split()) >= 3
+                and _LATIN_TEXT_RE.fullmatch(normalized)
+                and len(normalized.split()) >= 3
                 and (
-                    not probabilities
+                    any(token in normalized.lower() for token in _EN_NAV_HINTS)
+                    or not probabilities
                     or float(probabilities[0].prob) < 0.90
                 )
             ):

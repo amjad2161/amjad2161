@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import random
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -136,6 +135,14 @@ class OrbitalNav:
     """
 
     GNSS_SYSTEMS = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"]
+    SPEEDS_M_PER_S: dict[TransportMode, float] = {
+        TransportMode.DRIVE: 14.0,      # ~50 km/h
+        TransportMode.WALK: 1.4,        # ~5 km/h
+        TransportMode.BIKE: 5.5,        # ~20 km/h
+        TransportMode.DRONE: 50.0,      # 180 km/h
+        TransportMode.SUBMARINE: 8.0,   # ~29 km/h
+        TransportMode.SPACECRAFT: 7800.0,  # ~LEO orbital velocity (m/s)
+    }
 
     def __init__(
         self,
@@ -170,10 +177,10 @@ class OrbitalNav:
         for system in self.GNSS_SYSTEMS:
             statuses.append(SatelliteStatus(
                 system=system,
-                satellites_visible=random.randint(10, 16),
-                satellites_used=random.randint(8, 14),
-                hdop=round(random.uniform(0.5, 1.2), 2),
-                pdop=round(random.uniform(0.7, 1.8), 2),
+                satellites_visible=12,
+                satellites_used=10,
+                hdop=0.6,
+                pdop=0.9,
                 fix_type="RTK_FIXED" if self.precision == PrecisionMode.RTK else "3D",
             ))
         self._satellites = statuses
@@ -301,14 +308,7 @@ class OrbitalNav:
     ) -> Route:
         """Offline fallback: straight-line estimate when no network."""
         dist = origin.distance_to(destination)
-        speed = {
-            "driving": 14,
-            "walking": 1.4,
-            "cycling": 5.5,
-            "drone": 50,
-            "submarine": 8,
-            "spacecraft": 7800,
-        }.get(mode.value, 14)
+        speed = self.SPEEDS_M_PER_S.get(mode, self.SPEEDS_M_PER_S[TransportMode.DRIVE])
         return Route(
             origin=origin,
             destination=destination,
@@ -327,14 +327,7 @@ class OrbitalNav:
 
     def estimate_eta(self, distance_m: float, mode: TransportMode) -> float:
         """Estimate ETA in seconds from distance + mode speed."""
-        speed_ms = {
-            TransportMode.DRIVE: 14.0,      # ~50 km/h
-            TransportMode.WALK: 1.4,        # ~5 km/h
-            TransportMode.BIKE: 5.5,        # ~20 km/h
-            TransportMode.DRONE: 50.0,      # 180 km/h
-            TransportMode.SUBMARINE: 8.0,   # ~29 km/h
-            TransportMode.SPACECRAFT: 7800.0,
-        }[mode]
+        speed_ms = self.SPEEDS_M_PER_S.get(mode, self.SPEEDS_M_PER_S[TransportMode.DRIVE])
         if distance_m <= 0:
             return 0.0
         return distance_m / speed_ms

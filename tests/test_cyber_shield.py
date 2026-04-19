@@ -123,3 +123,8 @@ def test_diagnostics(shield):
     d = shield.diagnostics()
     assert d["status"] == "ONLINE"
     assert "total_events" in d
+
+
+def test_detect_gps_spoofing(shield):
+    assert shield.detect_gps_spoofing(32.0, 34.0, 32.0001, 34.0001, max_deviation_deg=0.01) is False
+    assert shield.detect_gps_spoofing(32.0, 34.0, 33.0, 35.0, max_deviation_deg=0.01) is True

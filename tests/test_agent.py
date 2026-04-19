@@ -40,6 +40,17 @@ async def test_agent_loop_handles_anthropic_api_error() -> None:
     assert calls == 2
 
 
+@pytest.mark.asyncio
+async def test_agent_loop_handles_generic_error() -> None:
+    async def runner(_prompt: str, _route: str) -> str:
+        raise ValueError("boom")
+
+    loop = AgentLoop(runner=runner, max_retries=3)
+    result = await loop.run("do something")
+    assert result["status"] == "error"
+    assert "boom" in result["error"]
+
+
 def test_agent_tools_use_medical_protocols() -> None:
     tools = build_default_tools()
     assert "medical.list_drugs" in tools

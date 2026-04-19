@@ -96,3 +96,30 @@ def test_diagnostics(nav):
     assert d["status"] == "ONLINE"
     assert d["precision_mode"] == "rtk"
     assert len(d["gnss_systems"]) == 5
+
+
+def test_estimate_eta(nav):
+    assert nav.estimate_eta(0, TransportMode.DRIVE) == 0
+    assert nav.estimate_eta(1000, TransportMode.WALK) > nav.estimate_eta(1000, TransportMode.DRIVE)
+
+
+def test_build_turn_by_turn(nav):
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[
+            nav._fallback_route(
+                Coordinate(lat=32.0, lon=34.0),
+                Coordinate(lat=33.0, lon=35.0),
+                TransportMode.DRIVE,
+            ).waypoints[0]
+        ],
+        total_distance_m=1000,
+        total_duration_s=100,
+        mode=TransportMode.DRIVE,
+        precision=PrecisionMode.STANDARD,
+    )
+    turns = nav.build_turn_by_turn(route)
+    assert turns[0]["index"] == 1
+    assert "instruction" in turns[0]
+    assert "coordinate" in turns[0]

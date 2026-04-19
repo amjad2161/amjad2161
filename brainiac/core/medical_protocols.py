@@ -46,7 +46,10 @@ class MedicalProtocols:
     def calculate_dose(self, drug_name: str, weight_kg: float) -> dict[str, Any]:
         if weight_kg <= 0:
             raise ValueError("weight_kg must be > 0")
-        info = self._DRUGS[drug_name.lower().strip()]
+        key = drug_name.lower().strip()
+        info = self._DRUGS.get(key)
+        if not info:
+            raise KeyError(f"Unknown drug: {drug_name}")
         dose = min(info.mg_per_kg * weight_kg, info.max_single_dose_mg)
         return {"drug": info.name, "weight_kg": weight_kg, "dose_mg": round(dose, 2), "route": info.route.value}
 

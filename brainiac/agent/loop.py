@@ -45,8 +45,9 @@ class AgentLoop:
         route = self.router.route(prompt)
         self.memory.store_fact("last_prompt", prompt, {"route": route})
         last_error: Exception | None = None
+        max_attempts = self.max_retries + 1
 
-        for attempt in range(1, self.max_retries + 2):
+        for attempt in range(1, max_attempts + 1):
             try:
                 output = await self.runner(prompt, route)
                 self.memory.store_fact("last_output", output, {"route": route})
@@ -70,7 +71,7 @@ class AgentLoop:
             status="error",
             route=route,
             error=str(last_error) if last_error else "unknown error",
-            attempts=self.max_retries + 1,
+            attempts=max_attempts,
         ).__dict__
 
 

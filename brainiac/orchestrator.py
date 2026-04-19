@@ -73,9 +73,16 @@ class Brainiac:
 
         self.router = AgentRouter()
         self.memory = AgentMemory()
-        self.agent = AgentLoop(router=self.router, memory=self.memory)
+        self.agent = AgentLoop(router=self.router, memory=self.memory, runner=self._run_agent)
         self._configure_auto_wiring()
         self.state = SystemState.ONLINE
+
+    async def _run_agent(self, prompt: str, route: str) -> str:
+        try:
+            thought = await self.neuro.think(f"[{route.upper()}]\n{prompt}")
+            return thought.content
+        except Exception:
+            return prompt
 
     def _configure_auto_wiring(self) -> None:
         """Wire module callbacks with safe defaults."""
