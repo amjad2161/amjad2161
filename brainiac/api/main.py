@@ -3,52 +3,66 @@ BRAINIAC API — FastAPI Application Entry Point
 ===============================================
 All 9 core modules exposed via REST + WebSocket endpoints.
 """
+
 from __future__ import annotations
 
-import asyncio
 import os
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse, Response
+from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 
+from brainiac.api.models import (
+    DetectLanguageRequest,
+    HealthResponse,
+    ImagePromptRequest,
+    PublishRequest,
+    RegisterDeviceRequest,
+    RouteRequest,
+    RouteResponse,
+    SensorReadingRequest,
+    SOSRequest,
+    SOSResponse,
+    TelemetryIngestResponse,
+    ThinkRequest,
+    ThinkResponse,
+    TranslateRequest,
+    TTSRequest,
+)
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    CreativeEngine,
+    CyberShield,
+    NeuroCore,
+    NexusSync,
+    OmniVision,
+    OrbitalNav,
+    SatLink,
+    SonicMatrix,
+    TelemetryHub,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
-from brainiac.api.models import (
-    ThinkRequest, ThinkResponse,
-    RouteRequest, RouteResponse,
-    SOSRequest, SOSResponse,
-    SensorReadingRequest, TelemetryIngestResponse,
-    TranslateRequest, DetectLanguageRequest, TTSRequest,
-    ImagePromptRequest,
-    RegisterDeviceRequest, PublishRequest,
-    HealthResponse,
-)
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
 
 # ── Module singletons ─────────────────────────────────────────────────────────
-neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
-nav     = OrbitalNav()
-sonic   = SonicMatrix()
+neuro = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
+nav = OrbitalNav()
+sonic = SonicMatrix()
 satlink = SatLink()
-nexus   = NexusSync()
-telem   = TelemetryHub()
-shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
-creative= CreativeEngine()
-vision  = OmniVision()
+nexus = NexusSync()
+telem = TelemetryHub()
+shield = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
+creative = CreativeEngine()
+vision = OmniVision()
 
 
 @asynccontextmanager
@@ -79,6 +93,7 @@ app.add_middleware(
 
 # ── Security middleware ───────────────────────────────────────────────────────
 
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "0.0.0.0"
@@ -93,7 +108,7 @@ async def security_middleware(request: Request, call_next):
             body_bytes = await request.body()
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
-            if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
+            if threat and threat.threat_level.value >= 3:  # HIGH or CRITICAL
                 return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
         except Exception:
             pass
@@ -107,6 +122,7 @@ async def security_middleware(request: Request, call_next):
 
 # ── Health / Status ───────────────────────────────────────────────────────────
 
+
 @app.get("/", tags=["System"])
 async def root():
     return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.0.0"}
@@ -118,15 +134,15 @@ async def health():
         status="ONLINE",
         version="1.0.0",
         modules={
-            "neuro_core":      "ONLINE",
-            "orbital_nav":     "ONLINE",
-            "satlink":         "ONLINE",
-            "sonic_matrix":    "ONLINE",
-            "nexus_sync":      "ONLINE",
-            "telemetry_hub":   "ONLINE",
-            "cyber_shield":    "ONLINE",
+            "neuro_core": "ONLINE",
+            "orbital_nav": "ONLINE",
+            "satlink": "ONLINE",
+            "sonic_matrix": "ONLINE",
+            "nexus_sync": "ONLINE",
+            "telemetry_hub": "ONLINE",
+            "cyber_shield": "ONLINE",
             "creative_engine": "ONLINE",
-            "omni_vision":     "ONLINE",
+            "omni_vision": "ONLINE",
         },
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -135,15 +151,15 @@ async def health():
 @app.get("/diagnostics", tags=["System"])
 async def diagnostics():
     return {
-        "neuro_core":      neuro.diagnostics(),
-        "orbital_nav":     nav.diagnostics(),
-        "satlink":         satlink.diagnostics(),
-        "sonic_matrix":    sonic.diagnostics(),
-        "nexus_sync":      nexus.diagnostics(),
-        "telemetry_hub":   telem.diagnostics(),
-        "cyber_shield":    shield.diagnostics(),
+        "neuro_core": neuro.diagnostics(),
+        "orbital_nav": nav.diagnostics(),
+        "satlink": satlink.diagnostics(),
+        "sonic_matrix": sonic.diagnostics(),
+        "nexus_sync": nexus.diagnostics(),
+        "telemetry_hub": telem.diagnostics(),
+        "cyber_shield": shield.diagnostics(),
         "creative_engine": creative.diagnostics(),
-        "omni_vision":     vision.diagnostics(),
+        "omni_vision": vision.diagnostics(),
     }
 
 
@@ -153,6 +169,7 @@ async def prometheus_metrics():
 
 
 # ── NEURO-CORE ────────────────────────────────────────────────────────────────
+
 
 @app.post("/api/v1/think", response_model=ThinkResponse, tags=["NEURO-CORE"])
 async def think(req: ThinkRequest):
@@ -168,15 +185,17 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
 async def think_stream(req: ThinkRequest):
     """Stream tokens as Server-Sent Events."""
+
     async def generator():
         async for token in neuro.think_stream(req.prompt):
             yield {"data": token}
+
     return EventSourceResponse(generator())
 
 
@@ -195,10 +214,11 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
+
 
 @app.websocket("/ws/chat")
 async def websocket_chat(ws: WebSocket):
@@ -216,12 +236,13 @@ async def websocket_chat(ws: WebSocket):
 
 # ── ORBITAL-NAV ───────────────────────────────────────────────────────────────
 
+
 @app.post("/api/v1/nav/route", response_model=RouteResponse, tags=["ORBITAL-NAV"])
 async def route(req: RouteRequest):
     origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
-    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
-    mode   = TransportMode(req.mode)
-    route  = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
+    dest = Coordinate(lat=req.dest_lat, lon=req.dest_lon)
+    mode = TransportMode(req.mode)
+    route = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
     s = route.summary()
     return RouteResponse(
         origin=s["origin"],
@@ -242,19 +263,24 @@ async def get_position():
     pos = await nav.get_position()
     sats = await nav.get_satellite_status()
     return {
-        "lat": pos.lat, "lon": pos.lon, "alt_m": pos.alt_m,
-        "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
+        "lat": pos.lat,
+        "lon": pos.lon,
+        "alt_m": pos.alt_m,
+        "accuracy_m": pos.accuracy_m,
+        "timestamp": pos.timestamp,
         "satellites": [{"system": s.system, "fix": s.fix_type, "hdop": s.hdop} for s in sats],
     }
 
 
 # ── SATLINK SOS ───────────────────────────────────────────────────────────────
 
+
 @app.post("/api/v1/sos", response_model=SOSResponse, tags=["SATLINK-X"])
 async def send_sos(req: SOSRequest):
     priority = SOSPriority[req.priority]
     packet = await satlink.send_sos(
-        lat=req.lat, lon=req.lon,
+        lat=req.lat,
+        lon=req.lon,
         message=req.message,
         priority=priority,
         alt_m=req.alt_m,
@@ -286,6 +312,7 @@ async def satellite_passes(lat: float = 32.0, lon: float = 34.8, hours: int = 24
 
 
 # ── SONIC-MATRIX ──────────────────────────────────────────────────────────────
+
 
 @app.post("/api/v1/sonic/detect", tags=["SONIC-MATRIX"])
 async def detect_language(req: DetectLanguageRequest):
@@ -323,7 +350,10 @@ async def supported_languages():
 
 # ── TELEMETRY-HUB ─────────────────────────────────────────────────────────────
 
-@app.post("/api/v1/telemetry/ingest", response_model=TelemetryIngestResponse, tags=["TELEMETRY-HUB"])
+
+@app.post(
+    "/api/v1/telemetry/ingest", response_model=TelemetryIngestResponse, tags=["TELEMETRY-HUB"]
+)
 async def ingest_telemetry(req: SensorReadingRequest):
     reading = SensorReading(
         sensor_id=req.sensor_id, value=req.value, unit=req.unit, quality=req.quality
@@ -340,9 +370,11 @@ async def ingest_telemetry(req: SensorReadingRequest):
 @app.get("/api/v1/telemetry/stream/{sensor_id}", tags=["TELEMETRY-HUB"])
 async def stream_sensor(sensor_id: str, interval: float = 1.0):
     """Server-Sent Events stream of live sensor readings."""
+
     async def generator():
         async for reading in telem.stream_sensor(sensor_id, interval_s=interval):
             yield {"data": str(reading)}
+
     return EventSourceResponse(generator())
 
 
@@ -353,9 +385,11 @@ async def telemetry_summary():
 
 # ── CREATIVE-ENGINE ───────────────────────────────────────────────────────────
 
+
 @app.post("/api/v1/creative/image-prompt", tags=["CREATIVE-ENGINE"])
 async def image_prompt(req: ImagePromptRequest):
     from brainiac.core.creative_engine import Style
+
     style = Style(req.style)
     return creative.generate_image_prompt(req.subject, style, req.width, req.height)
 
@@ -373,9 +407,11 @@ async def generate_3d(description: str):
 
 # ── NEXUS-SYNC ────────────────────────────────────────────────────────────────
 
+
 @app.post("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
 async def register_device(req: RegisterDeviceRequest):
     from brainiac.core.nexus_sync import DeviceType, Protocol
+
     try:
         device = nexus.register_device(
             device_id=req.device_id,
@@ -388,7 +424,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
@@ -404,6 +440,7 @@ async def publish_message(req: PublishRequest):
 
 # ── CYBER-SHIELD ──────────────────────────────────────────────────────────────
 
+
 @app.post("/api/v1/security/scan-input", tags=["CYBER-SHIELD"])
 async def scan_input(text: str, source_ip: str = "0.0.0.0"):
     threat = shield.scan_input(text, source_ip)
@@ -413,7 +450,9 @@ async def scan_input(text: str, source_ip: str = "0.0.0.0"):
             "type": threat.threat_type.value,
             "level": threat.threat_level.name,
             "description": threat.description,
-        } if threat else None,
+        }
+        if threat
+        else None,
     }
 
 
@@ -428,6 +467,7 @@ async def audit_config(config: dict):
 
 
 # ── OMNI-VISION ───────────────────────────────────────────────────────────────
+
 
 @app.post("/api/v1/vision/analyze", tags=["OMNI-VISION"])
 async def analyze_image(request: Request):

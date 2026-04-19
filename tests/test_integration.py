@@ -1,38 +1,45 @@
 """Integration tests — verify all BRAINIAC modules work together."""
+
 import pytest
+
 from brainiac.core import (
-    NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    CreativeEngine,
+    CyberShield,
+    NexusSync,
+    OmniVision,
+    OrbitalNav,
+    SatLink,
+    SonicMatrix,
+    TelemetryHub,
 )
-from brainiac.core.orbital_nav import Coordinate, TransportMode
+from brainiac.core.nexus_sync import DeviceType, Protocol
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
-from brainiac.core.nexus_sync import DeviceType, Protocol
 
 
 @pytest.mark.asyncio
 async def test_full_system_online():
     """Every module must come up in ONLINE status."""
-    nav     = OrbitalNav()
-    sonic   = SonicMatrix()
+    nav = OrbitalNav()
+    sonic = SonicMatrix()
     satlink = SatLink()
-    nexus   = NexusSync()
-    telem   = TelemetryHub()
-    shield  = CyberShield(secret_key="integration-test")
-    creative= CreativeEngine()
-    vision  = OmniVision()
+    nexus = NexusSync()
+    telem = TelemetryHub()
+    shield = CyberShield(secret_key="integration-test")
+    creative = CreativeEngine()
+    vision = OmniVision()
 
     await satlink.connect()
 
     statuses = {
-        "orbital_nav":     nav.diagnostics()["status"],
-        "sonic_matrix":    sonic.diagnostics()["status"],
-        "satlink":         satlink.diagnostics()["status"],
-        "nexus_sync":      nexus.diagnostics()["status"],
-        "telemetry_hub":   telem.diagnostics()["status"],
-        "cyber_shield":    shield.diagnostics()["status"],
+        "orbital_nav": nav.diagnostics()["status"],
+        "sonic_matrix": sonic.diagnostics()["status"],
+        "satlink": satlink.diagnostics()["status"],
+        "nexus_sync": nexus.diagnostics()["status"],
+        "telemetry_hub": telem.diagnostics()["status"],
+        "cyber_shield": shield.diagnostics()["status"],
         "creative_engine": creative.diagnostics()["status"],
-        "omni_vision":     vision.diagnostics()["status"],
+        "omni_vision": vision.diagnostics()["status"],
     }
     for name, status in statuses.items():
         assert status == "ONLINE", f"{name} is {status}"
@@ -48,11 +55,11 @@ async def test_emergency_flow_end_to_end():
     4. NEXUS-SYNC notifies connected drone
     5. CYBER-SHIELD signs the incident report
     """
-    nav     = OrbitalNav()
-    telem   = TelemetryHub(window_size=10)
+    nav = OrbitalNav()
+    telem = TelemetryHub(window_size=10)
     satlink = SatLink()
-    nexus   = NexusSync()
-    shield  = CyberShield(secret_key="emergency-test")
+    nexus = NexusSync()
+    shield = CyberShield(secret_key="emergency-test")
 
     # Step 1
     pos = await nav.get_position()

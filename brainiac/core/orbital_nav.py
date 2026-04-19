@@ -4,6 +4,7 @@ ORBITAL-NAV — Satellite-Fused Navigation Engine
 Sub-centimetre RTK GPS + multi-constellation GNSS + AI-predictive routing.
 Surpasses Waze, iGO, and Google Maps on every measurable axis.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,7 @@ import math
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import structlog
@@ -32,9 +33,9 @@ class TransportMode(str, Enum):
 
 
 class PrecisionMode(str, Enum):
-    STANDARD = "standard"   # ~3m
-    DGPS = "dgps"           # ~1m
-    RTK = "rtk"             # ~2cm
+    STANDARD = "standard"  # ~3m
+    DGPS = "dgps"  # ~1m
+    RTK = "rtk"  # ~2cm
 
 
 @dataclass
@@ -48,7 +49,7 @@ class Coordinate:
     def __str__(self) -> str:
         return f"({self.lat:.6f}, {self.lon:.6f}, alt={self.alt_m:.1f}m)"
 
-    def distance_to(self, other: "Coordinate") -> float:
+    def distance_to(self, other: Coordinate) -> float:
         """Haversine distance in metres."""
         phi1, phi2 = math.radians(self.lat), math.radians(other.lat)
         dphi = math.radians(other.lat - self.lat)
@@ -56,7 +57,7 @@ class Coordinate:
         a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
         return EARTH_RADIUS_M * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    def bearing_to(self, other: "Coordinate") -> float:
+    def bearing_to(self, other: Coordinate) -> float:
         """Initial bearing in degrees (0=N, 90=E, 180=S, 270=W)."""
         phi1, phi2 = math.radians(self.lat), math.radians(other.lat)
         dlam = math.radians(other.lon - self.lon)
@@ -116,9 +117,9 @@ class SatelliteStatus:
     system: str
     satellites_visible: int
     satellites_used: int
-    hdop: float          # Horizontal dilution of precision
-    pdop: float          # Position dilution of precision
-    fix_type: str        # NO_FIX | 2D | 3D | RTK_FLOAT | RTK_FIXED
+    hdop: float  # Horizontal dilution of precision
+    pdop: float  # Position dilution of precision
+    fix_type: str  # NO_FIX | 2D | 3D | RTK_FLOAT | RTK_FIXED
 
 
 class OrbitalNav:
@@ -134,7 +135,7 @@ class OrbitalNav:
     - Drone / spacecraft routing extensions
     """
 
-    GNSS_SYSTEMS = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"]
+    GNSS_SYSTEMS: ClassVar[list[str]] = ["GPS", "GLONASS", "Galileo", "BeiDou", "QZSS"]
 
     def __init__(
         self,
@@ -167,14 +168,16 @@ class OrbitalNav:
         """Return current satellite constellation health."""
         statuses = []
         for system in self.GNSS_SYSTEMS:
-            statuses.append(SatelliteStatus(
-                system=system,
-                satellites_visible=12,
-                satellites_used=10,
-                hdop=0.6,
-                pdop=0.9,
-                fix_type="RTK_FIXED" if self.precision == PrecisionMode.RTK else "3D",
-            ))
+            statuses.append(
+                SatelliteStatus(
+                    system=system,
+                    satellites_visible=12,
+                    satellites_used=10,
+                    hdop=0.6,
+                    pdop=0.9,
+                    fix_type="RTK_FIXED" if self.precision == PrecisionMode.RTK else "3D",
+                )
+            )
         self._satellites = statuses
         return statuses
 
@@ -272,7 +275,7 @@ class OrbitalNav:
     ) -> Route:
         """Direct great-circle route for drones / spacecraft."""
         dist = origin.distance_to(destination)
-        speed_ms = 50 if mode == TransportMode.DRONE else 7800   # drone ~50m/s, spacecraft ~7.8km/s
+        speed_ms = 50 if mode == TransportMode.DRONE else 7800  # drone ~50m/s, spacecraft ~7.8km/s
         duration = dist / speed_ms
 
         route = Route(

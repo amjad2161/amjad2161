@@ -1,8 +1,8 @@
 """Tests for TELEMETRY-HUB module."""
-import asyncio
-import time
+
 import pytest
-from brainiac.core.telemetry_hub import TelemetryHub, SensorReading, AnomalyType
+
+from brainiac.core.telemetry_hub import AnomalyType, SensorReading, TelemetryHub
 
 
 @pytest.fixture
@@ -14,7 +14,7 @@ def hub():
 async def test_ingest_normal(hub):
     reading = SensorReading(sensor_id="temp-01", value=22.5, unit="°C")
     anomaly = await hub.ingest(reading)
-    assert anomaly is None   # single reading cannot trigger anomaly
+    assert anomaly is None  # single reading cannot trigger anomaly
 
 
 @pytest.mark.asyncio
@@ -33,7 +33,7 @@ async def test_anomaly_detection_spike(hub):
 
 @pytest.mark.asyncio
 async def test_anomaly_detection_drop(hub):
-    for i in range(15):
+    for _i in range(15):
         await hub.ingest(SensorReading(sensor_id="s2", value=100.0, unit="Pa"))
 
     anomaly = await hub.ingest(SensorReading(sensor_id="s2", value=-999.0, unit="Pa"))
@@ -43,10 +43,7 @@ async def test_anomaly_detection_drop(hub):
 
 @pytest.mark.asyncio
 async def test_batch_ingest(hub):
-    readings = [
-        SensorReading(sensor_id=f"sensor-{i}", value=float(i), unit="V")
-        for i in range(10)
-    ]
+    readings = [SensorReading(sensor_id=f"sensor-{i}", value=float(i), unit="V") for i in range(10)]
     anomalies = await hub.ingest_batch(readings)
     assert isinstance(anomalies, list)
     assert hub.diagnostics()["active_streams"] == 10

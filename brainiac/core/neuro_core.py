@@ -2,19 +2,19 @@
 NEURO-CORE — ASI-Grade Reasoning Engine
 ========================================
 Orchestrates multi-model AI inference with Claude as primary intelligence,
-automatic fallback, prompt caching, parallel chain-of-thought, and
+automatic fallback, parallel chain-of-thought, and
 self-improving feedback loops.
 """
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any, ClassVar
 
 import anthropic
 import structlog
@@ -23,14 +23,15 @@ log = structlog.get_logger("brainiac.neuro_core")
 
 
 class ReasoningDepth(str, Enum):
-    FAST = "fast"          # haiku — <100ms
+    FAST = "fast"  # haiku — <100ms
     STANDARD = "standard"  # sonnet — <1s
-    DEEP = "deep"          # opus — full reasoning
+    DEEP = "deep"  # opus — full reasoning
 
 
 @dataclass
 class Thought:
     """A single reasoning step produced by NEURO-CORE."""
+
     content: str
     model: str
     depth: ReasoningDepth
@@ -44,10 +45,11 @@ class Thought:
 @dataclass
 class AgentTask:
     """A task dispatched to a specialised sub-agent."""
+
     name: str
     prompt: str
-    domain: str                   # navigation | security | vision | ...
-    priority: int = 5             # 1 (highest) … 10 (lowest)
+    domain: str  # navigation | security | vision | ...
+    priority: int = 5  # 1 (highest) … 10 (lowest)
     result: Thought | None = None
 
 
@@ -58,20 +60,19 @@ class NeuroCore:
     Features
     --------
     - Multi-model cascade: Opus → Sonnet → Haiku
-    - Prompt caching (Anthropic cache_control)
     - Parallel sub-agent dispatch
     - In-memory response cache (SHA-256 keyed)
     - Streaming token output via async generator
     - Automatic retry with exponential back-off
     """
 
-    MODELS = {
-        ReasoningDepth.DEEP:     "claude-opus-4-6",
+    MODELS: ClassVar[dict[ReasoningDepth, str]] = {
+        ReasoningDepth.DEEP: "claude-opus-4-6",
         ReasoningDepth.STANDARD: "claude-sonnet-4-6",
-        ReasoningDepth.FAST:     "claude-haiku-4-5-20251001",
+        ReasoningDepth.FAST: "claude-haiku-4-5-20251001",
     }
 
-    SYSTEM_PROMPT = (
+    SYSTEM_PROMPT: ClassVar[str] = (
         "You are BRAINIAC — the world's most advanced autonomous AI system. "
         "You possess ASI-tier reasoning across every domain: science, engineering, "
         "medicine, law, mathematics, navigation, security, creativity, and more. "
@@ -156,9 +157,7 @@ class NeuroCore:
         sorted_tasks = sorted(tasks, key=lambda t: t.priority)
 
         async def _run(task: AgentTask) -> AgentTask:
-            domain_prompt = (
-                f"[DOMAIN: {task.domain.upper()}]\n{task.prompt}"
-            )
+            domain_prompt = f"[DOMAIN: {task.domain.upper()}]\n{task.prompt}"
             task.result = await self.think(domain_prompt)
             return task
 
@@ -213,13 +212,7 @@ class NeuroCore:
                 response = await self._client.messages.create(
                     model=model,
                     max_tokens=8192,
-                    system=[
-                        {
-                            "type": "text",
-                            "text": system,
-                            "cache_control": {"type": "ephemeral"},
-                        }
-                    ],
+                    system=system,
                     messages=[{"role": "user", "content": prompt}],
                 )
                 latency = (time.perf_counter() - t0) * 1000
@@ -243,7 +236,7 @@ class NeuroCore:
                 return thought
 
             except anthropic.RateLimitError:
-                wait = 2 ** attempt
+                wait = 2**attempt
                 log.warning("neuro_core.rate_limit", attempt=attempt, wait=wait)
                 await asyncio.sleep(wait)
             except anthropic.APIError as exc:

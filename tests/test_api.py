@@ -1,7 +1,9 @@
 """Integration tests for BRAINIAC REST API."""
+
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 @pytest.fixture
@@ -9,10 +11,12 @@ def client():
     """Create test client with mocked AI calls."""
     with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
         from brainiac.api.main import app
+
         return TestClient(app, raise_server_exceptions=False)
 
 
 # ── System ────────────────────────────────────────────────────────────────────
+
 
 def test_root(client):
     r = client.get("/")
@@ -38,8 +42,15 @@ def test_diagnostics(client):
     assert r.status_code == 200
     data = r.json()
     expected_modules = [
-        "neuro_core", "orbital_nav", "satlink", "sonic_matrix",
-        "nexus_sync", "telemetry_hub", "cyber_shield", "creative_engine", "omni_vision",
+        "neuro_core",
+        "orbital_nav",
+        "satlink",
+        "sonic_matrix",
+        "nexus_sync",
+        "telemetry_hub",
+        "cyber_shield",
+        "creative_engine",
+        "omni_vision",
     ]
     for mod in expected_modules:
         assert mod in data
@@ -53,6 +64,7 @@ def test_metrics(client):
 
 # ── Navigation ────────────────────────────────────────────────────────────────
 
+
 def test_get_position(client):
     r = client.get("/api/v1/nav/position")
     assert r.status_code == 200
@@ -64,8 +76,10 @@ def test_get_position(client):
 
 def test_route_drone(client):
     payload = {
-        "origin_lat": 32.0, "origin_lon": 34.0,
-        "dest_lat": 33.0, "dest_lon": 35.0,
+        "origin_lat": 32.0,
+        "origin_lon": 34.0,
+        "dest_lat": 33.0,
+        "dest_lon": 35.0,
         "mode": "drone",
     }
     r = client.post("/api/v1/nav/route", json=payload)
@@ -78,9 +92,11 @@ def test_route_drone(client):
 
 # ── SOS ───────────────────────────────────────────────────────────────────────
 
+
 def test_sos_distress(client):
     payload = {
-        "lat": 32.0853, "lon": 34.7818,
+        "lat": 32.0853,
+        "lon": 34.7818,
         "message": "API integration test SOS",
         "priority": "DISTRESS",
         "sender_id": "test_suite",
@@ -94,6 +110,7 @@ def test_sos_distress(client):
 
 
 # ── Telemetry ─────────────────────────────────────────────────────────────────
+
 
 def test_ingest_normal_reading(client):
     payload = {"sensor_id": "temp-api-01", "value": 22.5, "unit": "°C"}
@@ -112,6 +129,7 @@ def test_telemetry_summary(client):
 
 # ── Sonic Matrix ──────────────────────────────────────────────────────────────
 
+
 def test_detect_language(client):
     r = client.post("/api/v1/sonic/detect", json={"text": "Hello, how are you?"})
     assert r.status_code == 200
@@ -129,6 +147,7 @@ def test_supported_languages(client):
 
 # ── Security ──────────────────────────────────────────────────────────────────
 
+
 def test_scan_clean_input(client):
     r = client.post("/api/v1/security/scan-input", params={"text": "Hello safe world"})
     assert r.status_code == 200
@@ -138,7 +157,7 @@ def test_scan_clean_input(client):
 def test_scan_sql_injection(client):
     r = client.post(
         "/api/v1/security/scan-input",
-        params={"text": "SELECT * FROM users WHERE 1=1; DROP TABLE users;"}
+        params={"text": "SELECT * FROM users WHERE 1=1; DROP TABLE users;"},
     )
     assert r.status_code == 200
     data = r.json()
@@ -157,6 +176,7 @@ def test_audit_config(client):
 
 # ── Creative Engine ───────────────────────────────────────────────────────────
 
+
 def test_image_prompt(client):
     payload = {"subject": "futuristic AI robot in space", "style": "cinematic"}
     r = client.post("/api/v1/creative/image-prompt", json=payload)
@@ -174,6 +194,7 @@ def test_generate_badge(client):
 
 
 # ── NEXUS-SYNC ────────────────────────────────────────────────────────────────
+
 
 def test_register_and_list_device(client):
     payload = {
@@ -196,6 +217,7 @@ def test_register_and_list_device(client):
 
 
 # ── Security Middleware ───────────────────────────────────────────────────────
+
 
 def test_security_headers(client):
     r = client.get("/")

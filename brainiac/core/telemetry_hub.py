@@ -3,6 +3,7 @@ TELEMETRY-HUB — Real-Time Data Ingestion & Analytics
 =====================================================
 Ingests from billions of sensors, detects anomalies, streams dashboards.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -10,9 +11,10 @@ import statistics
 import time
 import uuid
 from collections import deque
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator, Callable
+from typing import Any
 
 import structlog
 
@@ -33,7 +35,7 @@ class SensorReading:
     value: float
     unit: str
     timestamp: float = field(default_factory=time.time)
-    quality: float = 1.0          # 0 (bad) … 1 (perfect)
+    quality: float = 1.0  # 0 (bad) … 1 (perfect)
     metadata: dict = field(default_factory=dict)
 
 
@@ -44,7 +46,7 @@ class Anomaly:
     value: float
     expected_range: tuple[float, float]
     timestamp: float
-    severity: float               # 0..1
+    severity: float  # 0..1
 
 
 @dataclass
@@ -74,7 +76,7 @@ class TelemetryHub:
     - Predictive anomaly lookahead (30-minute window)
     """
 
-    ANOMALY_Z_THRESHOLD = 3.0      # z-score beyond which = anomaly
+    ANOMALY_Z_THRESHOLD = 3.0  # z-score beyond which = anomaly
 
     def __init__(self, window_size: int = 100) -> None:
         self.window_size = window_size
@@ -140,11 +142,9 @@ class TelemetryHub:
             if stream.mean == 0:
                 return None
             deviation = abs(reading.value - stream.mean)
-            if deviation < abs(stream.mean) * 0.5:   # <50% deviation tolerated
+            if deviation < abs(stream.mean) * 0.5:  # <50% deviation tolerated
                 return None
-            a_type = (
-                AnomalyType.SPIKE if reading.value > stream.mean else AnomalyType.DROP
-            )
+            a_type = AnomalyType.SPIKE if reading.value > stream.mean else AnomalyType.DROP
             return Anomaly(
                 sensor_id=reading.sensor_id,
                 anomaly_type=a_type,
@@ -157,9 +157,7 @@ class TelemetryHub:
         z_score = abs(reading.value - stream.mean) / stream.std_dev
 
         if z_score > self.ANOMALY_Z_THRESHOLD:
-            a_type = (
-                AnomalyType.SPIKE if reading.value > stream.mean else AnomalyType.DROP
-            )
+            a_type = AnomalyType.SPIKE if reading.value > stream.mean else AnomalyType.DROP
             severity = min(1.0, (z_score - self.ANOMALY_Z_THRESHOLD) / 3.0)
             return Anomaly(
                 sensor_id=reading.sensor_id,
@@ -180,6 +178,7 @@ class TelemetryHub:
     ) -> AsyncIterator[dict[str, Any]]:
         """Yield live readings for a sensor as an async generator."""
         import random
+
         base = 20.0
         while True:
             value = base + random.gauss(0, 1)
@@ -229,9 +228,7 @@ class TelemetryHub:
         ]
         for sid, stream in self._streams.items():
             safe_id = sid.replace("-", "_")
-            lines.append(
-                f'brainiac_sensor_mean{{sensor="{safe_id}"}} {stream.mean:.4f}'
-            )
+            lines.append(f'brainiac_sensor_mean{{sensor="{safe_id}"}} {stream.mean:.4f}')
         return "\n".join(lines)
 
     # ── Diagnostics ───────────────────────────────────────────────────────────

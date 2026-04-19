@@ -4,6 +4,7 @@ SATLINK-X — Satellite Connectivity & SOS Emergency Broadcast
 LEO satellite mesh, multi-channel SOS with <500ms response,
 post-quantum encrypted telemetry uplink/downlink.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 import structlog
 
@@ -24,16 +25,16 @@ class SOSPriority(int, Enum):
     ROUTINE = 1
     URGENT = 2
     DISTRESS = 3
-    MAYDAY = 4     # Highest — life-threatening
+    MAYDAY = 4  # Highest — life-threatening
 
 
 class BroadcastChannel(str, Enum):
     LEO_SATELLITE = "LEO_SATELLITE"
-    FIVE_G_LTE    = "5G_LTE"
-    LORA_MESH     = "LORA_MESH"
-    HF_RADIO      = "HF_RADIO"
-    IRIDIUM       = "IRIDIUM"
-    INMARSAT      = "INMARSAT"
+    FIVE_G_LTE = "5G_LTE"
+    LORA_MESH = "LORA_MESH"
+    HF_RADIO = "HF_RADIO"
+    IRIDIUM = "IRIDIUM"
+    INMARSAT = "INMARSAT"
 
 
 @dataclass
@@ -56,7 +57,12 @@ class SOSPacket:
         return {
             "incident_id": self.incident_id,
             "priority": self.priority.name,
-            "location": {"lat": self.lat, "lon": self.lon, "alt_m": self.alt_m, "accuracy_m": self.accuracy_m},
+            "location": {
+                "lat": self.lat,
+                "lon": self.lon,
+                "alt_m": self.alt_m,
+                "accuracy_m": self.accuracy_m,
+            },
             "message": self.message,
             "sender_id": self.sender_id,
             "timestamp": self.timestamp,
@@ -69,10 +75,11 @@ class SOSPacket:
 @dataclass
 class SatellitePass:
     """Predicted satellite overhead pass."""
+
     sat_id: str
     sat_name: str
-    aos_time: float      # Acquisition of Signal (Unix timestamp)
-    los_time: float      # Loss of Signal
+    aos_time: float  # Acquisition of Signal (Unix timestamp)
+    los_time: float  # Loss of Signal
     max_elevation_deg: float
     azimuth_deg: float
     link_quality: float  # 0..1
@@ -93,7 +100,7 @@ class SatLink:
     - Incident report generation
     """
 
-    SOS_CHANNELS = [
+    SOS_CHANNELS: ClassVar[list[BroadcastChannel]] = [
         BroadcastChannel.LEO_SATELLITE,
         BroadcastChannel.FIVE_G_LTE,
         BroadcastChannel.LORA_MESH,
@@ -129,7 +136,7 @@ class SatLink:
 
     async def _connect_channel(self, channel: BroadcastChannel) -> bool:
         """Simulate channel acquisition (replace with real driver)."""
-        await asyncio.sleep(0.05)          # simulate handshake latency
+        await asyncio.sleep(0.05)  # simulate handshake latency
         quality = 0.95 if channel == BroadcastChannel.LEO_SATELLITE else 0.85
         self._link_quality[channel.value] = quality
         return True
@@ -165,17 +172,12 @@ class SatLink:
         )
 
         t0 = time.perf_counter()
-        broadcast_tasks = [
-            self._broadcast_channel(packet, ch)
-            for ch in self.SOS_CHANNELS
-        ]
+        broadcast_tasks = [self._broadcast_channel(packet, ch) for ch in self.SOS_CHANNELS]
         results = await asyncio.gather(*broadcast_tasks, return_exceptions=True)
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         packet.channels_used = [
-            self.SOS_CHANNELS[i].value
-            for i, r in enumerate(results)
-            if r is True
+            self.SOS_CHANNELS[i].value for i, r in enumerate(results) if r is True
         ]
         packet.acknowledged = len(packet.channels_used) > 0
         if packet.acknowledged:
@@ -197,7 +199,7 @@ class SatLink:
 
     async def _broadcast_channel(self, packet: SOSPacket, channel: BroadcastChannel) -> bool:
         """Simulate transmission on a single channel."""
-        await asyncio.sleep(0.01)          # simulate RF propagation
+        await asyncio.sleep(0.01)  # simulate RF propagation
         encoded = self._encode_packet(packet)
         log.debug("satlink.broadcast", channel=channel.value, size=len(encoded))
         return True
@@ -205,7 +207,7 @@ class SatLink:
     async def _notify_responders(self, packet: SOSPacket) -> list[str]:
         """Alert emergency services and designated contacts."""
         responders = ["EMERGENCY_SERVICES", "LOCAL_RESCUE", "BRAINIAC_DISPATCH"]
-        await asyncio.sleep(0.02)          # simulate notification dispatch
+        await asyncio.sleep(0.02)  # simulate notification dispatch
         return responders
 
     # ── Telemetry Uplink ──────────────────────────────────────────────────────

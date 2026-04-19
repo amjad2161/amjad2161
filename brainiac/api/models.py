@@ -1,16 +1,21 @@
 """Pydantic request/response models for the BRAINIAC API."""
+
 from __future__ import annotations
 
 from typing import Any
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # ── NEURO-CORE ────────────────────────────────────────────────────────────────
 
+
 class ThinkRequest(BaseModel):
-    prompt: str = Field(..., min_length=1, max_length=32768, description="Question or task for BRAINIAC")
+    prompt: str = Field(
+        ..., min_length=1, max_length=32768, description="Question or task for BRAINIAC"
+    )
     depth: str = Field("standard", pattern="^(fast|standard|deep)$")
     use_cache: bool = True
+
 
 class ThinkResponse(BaseModel):
     content: str
@@ -23,6 +28,7 @@ class ThinkResponse(BaseModel):
 
 # ── ORBITAL-NAV ───────────────────────────────────────────────────────────────
 
+
 class RouteRequest(BaseModel):
     origin_lat: float
     origin_lon: float
@@ -30,6 +36,7 @@ class RouteRequest(BaseModel):
     dest_lon: float
     mode: str = Field("driving", pattern="^(driving|walking|cycling|drone|spacecraft)$")
     alternatives: int = Field(3, ge=0, le=5)
+
 
 class RouteResponse(BaseModel):
     origin: str
@@ -46,6 +53,7 @@ class RouteResponse(BaseModel):
 
 # ── SATLINK SOS ───────────────────────────────────────────────────────────────
 
+
 class SOSRequest(BaseModel):
     lat: float
     lon: float
@@ -53,6 +61,7 @@ class SOSRequest(BaseModel):
     priority: str = Field("DISTRESS", pattern="^(ROUTINE|URGENT|DISTRESS|MAYDAY)$")
     alt_m: float = 0.0
     sender_id: str = "UNKNOWN"
+
 
 class SOSResponse(BaseModel):
     incident_id: str
@@ -64,11 +73,13 @@ class SOSResponse(BaseModel):
 
 # ── TELEMETRY ─────────────────────────────────────────────────────────────────
 
+
 class SensorReadingRequest(BaseModel):
     sensor_id: str
     value: float
     unit: str = ""
     quality: float = Field(1.0, ge=0.0, le=1.0)
+
 
 class TelemetryIngestResponse(BaseModel):
     sensor_id: str
@@ -79,13 +90,16 @@ class TelemetryIngestResponse(BaseModel):
 
 # ── SONIC-MATRIX ──────────────────────────────────────────────────────────────
 
+
 class TranslateRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
     target_lang: str = Field(..., min_length=2, max_length=5)
     source_lang: str = "auto"
 
+
 class DetectLanguageRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=10000)
+
 
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000)
@@ -94,14 +108,19 @@ class TTSRequest(BaseModel):
 
 # ── CREATIVE-ENGINE ───────────────────────────────────────────────────────────
 
+
 class ImagePromptRequest(BaseModel):
     subject: str = Field(..., min_length=1, max_length=1000)
-    style: str = Field("photorealistic", pattern="^(photorealistic|cinematic|illustration|technical|abstract|pixel_art|3d_render|blueprint)$")
+    style: str = Field(
+        "photorealistic",
+        pattern="^(photorealistic|cinematic|illustration|technical|abstract|pixel_art|3d_render|blueprint)$",
+    )
     width: int = Field(1024, ge=256, le=4096)
     height: int = Field(1024, ge=256, le=4096)
 
 
 # ── NEXUS-SYNC ────────────────────────────────────────────────────────────────
+
 
 class RegisterDeviceRequest(BaseModel):
     device_id: str
@@ -111,6 +130,7 @@ class RegisterDeviceRequest(BaseModel):
     name: str = ""
     capabilities: list[str] = []
 
+
 class PublishRequest(BaseModel):
     device_id: str
     topic: str
@@ -119,6 +139,7 @@ class PublishRequest(BaseModel):
 
 
 # ── Generic ───────────────────────────────────────────────────────────────────
+
 
 class HealthResponse(BaseModel):
     status: str

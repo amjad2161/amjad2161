@@ -4,15 +4,16 @@ NEXUS-SYNC — Universal Integration Hub
 Connects BRAINIAC to IoT, industrial SCADA, vehicles, smart cities,
 medical devices, drones — via MQTT, WebSocket, REST, gRPC, OPC-UA.
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 import structlog
 
@@ -75,7 +76,7 @@ class Message:
     topic: str
     payload: dict[str, Any]
     timestamp: float = field(default_factory=time.time)
-    qos: int = 1                  # 0=fire-and-forget, 1=at-least-once, 2=exactly-once
+    qos: int = 1  # 0=fire-and-forget, 1=at-least-once, 2=exactly-once
 
 
 class NexusSync:
@@ -90,7 +91,7 @@ class NexusSync:
 
     def __init__(self) -> None:
         self._devices: dict[str, Device] = {}
-        self._subscriptions: dict[str, list[Callable]] = {}   # topic → handlers
+        self._subscriptions: dict[str, list[Callable]] = {}  # topic → handlers
         self._message_log: list[Message] = []
         self._message_count = 0
         log.info("nexus_sync.init")
@@ -131,7 +132,7 @@ class NexusSync:
             raise KeyError(f"Device {device_id!r} not registered")
 
         # In production: open actual MQTT / WebSocket / gRPC connection
-        await asyncio.sleep(0.01)          # simulate handshake
+        await asyncio.sleep(0.01)  # simulate handshake
         device.connected = True
         device.last_seen = time.time()
         log.info("nexus_sync.device_connected", id=device_id, protocol=device.protocol.value)
@@ -190,10 +191,7 @@ class NexusSync:
             self._devices[device_id].last_seen = time.time()
 
         # Route to subscribers (exact match + wildcard '#')
-        handlers = (
-            self._subscriptions.get(topic, []) +
-            self._subscriptions.get("#", [])
-        )
+        handlers = self._subscriptions.get(topic, []) + self._subscriptions.get("#", [])
         if handlers:
             # Support both sync and async handlers
             coros = []
@@ -226,7 +224,7 @@ class NexusSync:
             return {"error": f"device {device_id!r} not connected"}
 
         # In production: send via device's native protocol
-        await asyncio.sleep(0.005)         # simulate round-trip
+        await asyncio.sleep(0.005)  # simulate round-trip
         response = {
             "device_id": device_id,
             "command": command,
@@ -241,7 +239,7 @@ class NexusSync:
 
     def diagnostics(self) -> dict[str, Any]:
         connected = sum(1 for d in self._devices.values() if d.connected)
-        type_counts = {}
+        type_counts: dict[str, int] = {}
         for d in self._devices.values():
             type_counts[d.device_type.value] = type_counts.get(d.device_type.value, 0) + 1
         return {

@@ -4,6 +4,7 @@ OMNI-VISION — Multi-Spectrum Visual Intelligence
 360° visual awareness: visible, infrared, thermal, radar, SAR.
 Object detection, scene understanding, real-time processing.
 """
+
 from __future__ import annotations
 
 import base64
@@ -32,10 +33,10 @@ class Spectrum(str, Enum):
 class Detection:
     label: str
     confidence: float
-    bbox: tuple[int, int, int, int]        # x, y, w, h in pixels
+    bbox: tuple[int, int, int, int]  # x, y, w, h in pixels
     spectrum: Spectrum
     distance_m: float | None = None
-    velocity_ms: float | None = None       # for moving objects
+    velocity_ms: float | None = None  # for moving objects
 
 
 @dataclass
@@ -73,6 +74,7 @@ class OmniVision:
         try:
             import cv2
             import numpy as np
+
             arr = np.frombuffer(image_bytes, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
             return img
@@ -84,6 +86,7 @@ class OmniVision:
         """Extract basic image metadata."""
         try:
             from PIL import Image
+
             img = Image.open(io.BytesIO(image_bytes))
             return {
                 "format": img.format,
@@ -107,6 +110,7 @@ class OmniVision:
         """Resize image and return as PNG bytes."""
         try:
             from PIL import Image
+
             img = Image.open(io.BytesIO(image_bytes))
             resized = img.resize((width, height))
             buf = io.BytesIO()
@@ -119,13 +123,14 @@ class OmniVision:
     def extract_dominant_colors(self, image_bytes: bytes, n: int = 5) -> list[str]:
         """Return top-N dominant colors as hex strings."""
         try:
-            import numpy as np
             from PIL import Image
+
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB").resize((100, 100))
-            pixels = np.array(img).reshape(-1, 3)
             # Simple k-means would be ideal; here we use quantization
             quantized = img.quantize(colors=n)
             palette = quantized.getpalette()
+            if palette is None:
+                return []
             colors = []
             for i in range(n):
                 r, g, b = palette[i * 3], palette[i * 3 + 1], palette[i * 3 + 2]
@@ -140,6 +145,7 @@ class OmniVision:
         try:
             import cv2
             import numpy as np
+
             arr = np.frombuffer(image_bytes, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
             edges = cv2.Canny(img, 100, 200)
@@ -164,10 +170,10 @@ class OmniVision:
 
         return SceneAnalysis(
             description=(
-                f"Image {info.get('width', '?')}×{info.get('height', '?')} "
+                f"Image {info.get('width', '?')}x{info.get('height', '?')} "
                 f"{info.get('format', 'unknown')} — awaiting YOLO model for object detection"
             ),
-            objects=[],                    # Populate when YOLO model is loaded
+            objects=[],  # Populate when YOLO model is loaded
             dominant_colors=colors,
             estimated_lighting="unknown",
             weather_conditions=None,
@@ -182,6 +188,7 @@ class OmniVision:
         try:
             import cv2
             import numpy as np
+
             arr = np.frombuffer(image_bytes, dtype=np.uint8)
             img = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
             thermal = cv2.applyColorMap(img, cv2.COLORMAP_INFERNO)

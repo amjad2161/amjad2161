@@ -6,10 +6,12 @@ Usage:
     python -m brainiac.cli demo
     python -m brainiac.cli serve
 """
+
 from __future__ import annotations
 
 import asyncio
 import sys
+from typing import Any
 
 
 def _print_banner() -> None:
@@ -23,13 +25,21 @@ def _print_banner() -> None:
 
 async def _cmd_status() -> int:
     from brainiac.core import (
-        NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-        NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+        CreativeEngine,
+        CyberShield,
+        NeuroCore,
+        NexusSync,
+        OmniVision,
+        OrbitalNav,
+        SatLink,
+        SonicMatrix,
+        TelemetryHub,
     )
+
     _print_banner()
     print("▶ Initialising all 9 core modules...\n")
 
-    modules = {
+    modules: dict[str, Any] = {
         "NEURO-CORE      ": NeuroCore(),
         "ORBITAL-NAV     ": OrbitalNav(),
         "SONIC-MATRIX    ": SonicMatrix(),
@@ -53,11 +63,18 @@ async def _cmd_status() -> int:
 
 
 async def _cmd_demo() -> int:
-    from brainiac.core import OrbitalNav, SatLink, TelemetryHub, NexusSync, CyberShield, CreativeEngine
+    from brainiac.core import (
+        CreativeEngine,
+        CyberShield,
+        NexusSync,
+        OrbitalNav,
+        SatLink,
+        TelemetryHub,
+    )
+    from brainiac.core.nexus_sync import DeviceType, Protocol
     from brainiac.core.orbital_nav import Coordinate, TransportMode
     from brainiac.core.satlink import SOSPriority
     from brainiac.core.telemetry_hub import SensorReading
-    from brainiac.core.nexus_sync import DeviceType, Protocol
 
     _print_banner()
     print("▶ Running end-to-end demo flow...\n")
@@ -67,7 +84,7 @@ async def _cmd_demo() -> int:
     telem = TelemetryHub()
     nexus = NexusSync()
     shield = CyberShield()
-    creative = CreativeEngine()
+    _ = CreativeEngine()
 
     print("[1/6] Acquiring RTK GPS position…")
     pos = await nav.get_position()
@@ -83,9 +100,7 @@ async def _cmd_demo() -> int:
     print(f"      ✓ Uplink status: {conn['status']}")
 
     print("[4/6] Registering rescue drone in NEXUS-SYNC…")
-    nexus.register_device(
-        "rescue-drone-01", DeviceType.DRONE, Protocol.MQTT, "mqtt://rescue"
-    )
+    nexus.register_device("rescue-drone-01", DeviceType.DRONE, Protocol.MQTT, "mqtt://rescue")
     await nexus.connect_device("rescue-drone-01")
     print("      ✓ Drone connected")
 
@@ -93,12 +108,19 @@ async def _cmd_demo() -> int:
     for _ in range(10):
         await telem.ingest(SensorReading(sensor_id="heart-rate", value=72, unit="bpm"))
     anomaly = await telem.ingest(SensorReading(sensor_id="heart-rate", value=220, unit="bpm"))
-    print(f"      ✓ Anomaly detected: {anomaly.anomaly_type.value} (severity {anomaly.severity})")
+    if anomaly is not None:
+        print(
+            f"      ✓ Anomaly detected: {anomaly.anomaly_type.value} (severity {anomaly.severity})"
+        )
+    else:
+        print("      ⚠ No anomaly detected")
 
     print("[6/6] Broadcasting SOS over all channels…")
     packet = await satlink.send_sos(
-        lat=pos.lat, lon=pos.lon,
-        message="DEMO: vitals critical", priority=SOSPriority.DISTRESS,
+        lat=pos.lat,
+        lon=pos.lon,
+        message="DEMO: vitals critical",
+        priority=SOSPriority.DISTRESS,
     )
     print(f"      ✓ SOS sent on {len(packet.channels_used)} channels")
     print(f"      ✓ Responders notified: {', '.join(packet.responders_notified)}")
@@ -112,6 +134,7 @@ async def _cmd_demo() -> int:
 
 def _cmd_serve() -> int:
     import uvicorn
+
     _print_banner()
     print("▶ Starting BRAINIAC API server on 0.0.0.0:8000…\n")
     uvicorn.run("brainiac.api.main:app", host="0.0.0.0", port=8000, reload=False)

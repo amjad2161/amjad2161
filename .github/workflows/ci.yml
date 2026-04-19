@@ -27,20 +27,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff pytest pytest-asyncio pytest-cov
+          pip install -e .
+          pip install ruff mypy
 
       - name: Lint with Ruff
-        run: ruff check brainiac/ tests/ || true
+        run: |
+          ruff check .
+          ruff format --check .
+
+      - name: Type-check with mypy
+        run: mypy .
 
       - name: Run tests
         env:
           ANTHROPIC_API_KEY: dummy-key-for-ci
           BRAINIAC_SECRET: ci-test-secret
         run: |
-          pytest tests/ \
-            --ignore=tests/test_neuro_core.py \
-            -v \
+          pytest -q \
             --cov=brainiac \
             --cov-report=xml \
             --cov-report=term-missing
