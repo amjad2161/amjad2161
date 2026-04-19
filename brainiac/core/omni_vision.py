@@ -131,7 +131,7 @@ class OmniVision:
             # Simple k-means would be ideal; here we use quantization
             quantized = img.quantize(colors=n)
             palette = quantized.getpalette()
-            if not palette:
+            if palette is None:
                 return []
             colors = []
             for i in range(n):

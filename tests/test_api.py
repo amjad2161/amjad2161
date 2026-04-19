@@ -262,29 +262,36 @@ def test_request_id_passthrough(client):
 
 
 def test_request_id_in_structlog(client):
+    previous_config = structlog.get_config()
     log_output = io.StringIO()
     handler = logging.StreamHandler(log_output)
     logger = logging.getLogger("brainiac.api")
-    logger.handlers = [handler]
-    logger.setLevel(logging.INFO)
+    old_handlers = list(logger.handlers)
 
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.KeyValueRenderer(key_order=["event", "request_id"]),
-        ],
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-    )
+    try:
+        logger.handlers = [handler]
+        logger.setLevel(logging.INFO)
 
-    req_id = "trace-abc-123"
-    r = client.get("/", headers={"X-Request-Id": req_id})
-    assert r.status_code == 200
-    assert r.headers["X-Request-Id"] == req_id
+        structlog.configure(
+            processors=[
+                structlog.contextvars.merge_contextvars,
+                structlog.processors.KeyValueRenderer(key_order=["event", "request_id"]),
+            ],
+            logger_factory=structlog.stdlib.LoggerFactory(),
+            wrapper_class=structlog.stdlib.BoundLogger,
+        )
 
-    handler.flush()
-    logs = log_output.getvalue()
-    assert req_id in logs
+        req_id = "trace-abc-123"
+        r = client.get("/", headers={"X-Request-Id": req_id})
+        assert r.status_code == 200
+        assert r.headers["X-Request-Id"] == req_id
+
+        handler.flush()
+        logs = log_output.getvalue()
+        assert req_id in logs
+    finally:
+        logger.handlers = old_handlers
+        structlog.configure(**previous_config)
 
 
 def test_request_body_too_large(client):
