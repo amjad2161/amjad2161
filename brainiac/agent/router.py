@@ -1,35 +1,38 @@
 """
-GANE Agent Router — Multi-agent orchestrator that routes tasks to specialist agents.
+GANE Agent Router — Multi-agent orchestrator routing tasks to specialist agents.
 
 The router:
-  1. Analyzes the incoming prompt to determine the best agent
-  2. Dispatches to the appropriate specialist
-  3. Handles fallback and error recovery
-  4. Maintains shared memory across all agents
+  1. Classifies prompts via keyword routing
+  2. Dispatches to the matching specialist via the BaseAgent.run() interface
+  3. Maintains shared memory across all agents
 """
 from __future__ import annotations
 
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
+from .agents import MedicalContentAgent, NavigationAgent, TelemetryAnalystAgent
+from .base import BaseAgent
 from .memory import AgentMemory, Episode
-from .agents import TelemetryAnalystAgent, MedicalContentAgent
 
 if TYPE_CHECKING:
-    from brainiac.core.telemetry_hub import TelemetryHub
     from brainiac.core.creative_engine import CreativeEngine
+    from brainiac.core.orbital_nav import OrbitalNav
+    from brainiac.core.telemetry_hub import TelemetryHub
 
 log = structlog.get_logger("brainiac.agent.router")
 
-# Keyword routing rules: (pattern, agent_name)
-_ROUTING_RULES = [
-    (r"\b(sensor|telemetry|anomaly|temperature|pressure|voltage|reading|threshold)\b", "telemetry"),
-    (r"\b(medical|drug|dose|protocol|acls|bls|cpr|epinephrine|resuscit|clinical|patient)\b", "medical"),
+# Routing rules: (compiled pattern, agent_name, label)
+_ROUTING_RULES: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"\b(route|navigate|drive|drone|spacecraft|geofence|eta|coordinate|destination|origin|waypoint)\b", re.I), "navigation", "navigation"),
+    (re.compile(r"\b(medical|drug|dose|protocol|acls|bls|cpr|epinephrine|resuscit|clinical|patient|aha)\b", re.I), "medical", "medical"),
+    (re.compile(r"\b(sensor|telemetry|anomaly|temperature|pressure|voltage|reading|threshold|spike|drop|flatline)\b", re.I), "telemetry", "telemetry"),
 ]
+_DEFAULT_AGENT = "telemetry"
 
 
 @dataclass
@@ -42,43 +45,43 @@ class RouterResult:
 
 
 class AgentRouter:
-    """
-    Multi-agent router that dispatches tasks to specialist agents.
-
-    Shared memory means facts learned by one agent are available to all others.
-
-    Example:
-        router = AgentRouter(api_key="sk-...", telem=hub, creative=engine)
-        result = await router.run("Check if sensor T-42 is anomalous")
-    """
+    """Multi-agent router with shared memory across all specialist agents."""
 
     def __init__(
         self,
         api_key: str | None = None,
         telem: "TelemetryHub | None" = None,
         creative: "CreativeEngine | None" = None,
+        nav: "OrbitalNav | None" = None,
         auto_approve: bool = True,
     ) -> None:
         self.memory = AgentMemory()
-        self._agents: dict[str, Any] = {
+        self._agents: dict[str, BaseAgent] = {
             "telemetry": TelemetryAnalystAgent(
-                memory=self.memory, telem=telem, api_key=api_key, auto_approve=auto_approve,
+                memory=self.memory, telem=telem,
+                api_key=api_key, auto_approve=auto_approve,
             ),
             "medical": MedicalContentAgent(
-                memory=self.memory, creative=creative, api_key=api_key, auto_approve=auto_approve,
+                memory=self.memory, creative=creative,
+                api_key=api_key, auto_approve=auto_approve,
+            ),
+            "navigation": NavigationAgent(
+                memory=self.memory, nav=nav,
+                api_key=api_key, auto_approve=auto_approve,
             ),
         }
         log.info("agent_router.init", agents=list(self._agents.keys()))
 
-    async def run(self, prompt: str) -> RouterResult:
-        """Route the prompt to the best agent and return the result."""
+    async def run(self, prompt: str, force_agent: str | None = None) -> RouterResult:
+        """Route the prompt to the best agent (or a forced one) and return the result."""
         t0 = time.perf_counter()
-        agent_name, reason = self._route(prompt)
+        if force_agent and force_agent in self._agents:
+            agent_name, reason = force_agent, "forced"
+        else:
+            agent_name, reason = self.route(prompt)
         agent = self._agents[agent_name]
-
         log.info("agent_router.dispatch", agent=agent_name, reason=reason)
-        episode: Episode = await agent.analyze(prompt) if hasattr(agent, "analyze") else await agent.generate(prompt)
-
+        episode = await agent.run(prompt)
         return RouterResult(
             agent_used=agent_name,
             episode=episode,
@@ -86,16 +89,23 @@ class AgentRouter:
             total_ms=(time.perf_counter() - t0) * 1000,
         )
 
-    def _route(self, prompt: str) -> tuple[str, str]:
+    @staticmethod
+    def route(prompt: str) -> tuple[str, str]:
         """Keyword-based routing; returns (agent_name, reason)."""
-        prompt_lower = prompt.lower()
-        for pattern, agent_name in _ROUTING_RULES:
-            if re.search(pattern, prompt_lower, re.IGNORECASE):
-                return agent_name, f"keyword match: {pattern[:30]}"
-        return "telemetry", "default agent"
+        for pattern, agent_name, label in _ROUTING_RULES:
+            if pattern.search(prompt):
+                return agent_name, f"matched:{label}"
+        return _DEFAULT_AGENT, "default"
+
+    @property
+    def agents(self) -> dict[str, BaseAgent]:
+        return dict(self._agents)
 
     def diagnostics(self) -> dict:
         return {
-            "agents": list(self._agents.keys()),
-            "memory": self.memory.diagnostics(),
+            "agents": {name: agent.diagnostics() for name, agent in self._agents.items()},
+            "memory": {
+                "episodes_kept": self.memory._episodes.maxlen,
+                "decisions_kept": self.memory._decisions.maxlen,
+            },
         }

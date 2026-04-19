@@ -6,6 +6,7 @@ All 9 core modules exposed via REST + WebSocket endpoints.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -35,9 +36,16 @@ from brainiac.api.models import (
     RegisterDeviceRequest, PublishRequest,
     HealthResponse,
 )
+from brainiac.agent import AgentRouter
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+_SCAN_FIELDS = frozenset({"prompt", "text", "message", "subject", "description", "query"})
+_MAX_BODY_BYTES        = 10 * 1024 * 1024   # 10 MB hard cap on request body
+_MAX_VISION_BYTES      = 5 * 1024 * 1024    # 5 MB max image upload
+_MAX_SCAN_BYTES        = 256 * 1024         # only scan first 256 KB of JSON
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -49,6 +57,11 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
+_agent_router = AgentRouter(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    telem=telem, creative=creative, nav=nav,
+    auto_approve=True,
+)
 
 
 @asynccontextmanager
@@ -83,30 +96,34 @@ app.add_middleware(
 async def security_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "0.0.0.0"
 
-    # Rate limiting
     if not shield.check_rate_limit(client_ip):
         return JSONResponse(status_code=429, content={"error": "Rate limit exceeded"})
 
-    # Scan string values in JSON body for injection on write methods
-    # (scan parsed field values, not raw JSON, to avoid false positives on natural English)
+    # Hard cap on total request body size declared via Content-Length
+    cl = request.headers.get("content-length")
+    if cl and cl.isdigit() and int(cl) > _MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"error": "Request body too large"})
+
+    # Scan parsed JSON field values for injection — never the raw body, never binary uploads
     if request.method in ("POST", "PUT", "PATCH"):
         content_type = request.headers.get("content-type", "")
         if "application/json" in content_type:
             try:
-                import json as _json
                 body_bytes = await request.body()
-                body_str = body_bytes.decode("utf-8", errors="ignore")
+                if len(body_bytes) > _MAX_BODY_BYTES:
+                    return JSONResponse(status_code=413, content={"error": "Request body too large"})
+                # json.loads accepts bytes directly (Python 3.6+), no decode needed
+                scan_window = body_bytes if len(body_bytes) <= _MAX_SCAN_BYTES else body_bytes[:_MAX_SCAN_BYTES]
                 try:
-                    body_json = _json.loads(body_str)
-                except _json.JSONDecodeError:
-                    body_json = {}
-                # Only scan explicitly user-supplied string fields, not all JSON text
-                _SCAN_FIELDS = {"prompt", "text", "message", "subject", "description", "query"}
-                for key, val in (body_json.items() if isinstance(body_json, dict) else []):
-                    if key in _SCAN_FIELDS and isinstance(val, str):
-                        threat = shield.scan_input(val, source_ip=client_ip)
-                        if threat and threat.threat_level.value >= 3:
-                            return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
+                    body_json = json.loads(scan_window)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    body_json = None
+                if isinstance(body_json, dict):
+                    for key, val in body_json.items():
+                        if key in _SCAN_FIELDS and isinstance(val, str):
+                            threat = shield.scan_input(val, source_ip=client_ip)
+                            if threat and threat.threat_level.value >= 3:
+                                return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
             except Exception:
                 pass
 
@@ -441,12 +458,21 @@ async def audit_config(config: dict):
 
 # ── OMNI-VISION ───────────────────────────────────────────────────────────────
 
+def _validate_image_request(request: Request, image_bytes: bytes) -> None:
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    if len(image_bytes) > _MAX_VISION_BYTES:
+        raise HTTPException(status_code=413, detail=f"Image exceeds {_MAX_VISION_BYTES} byte limit")
+    ct = request.headers.get("content-type", "")
+    if ct and not ct.startswith("image/") and "octet-stream" not in ct:
+        raise HTTPException(status_code=415, detail="Content-Type must be image/* or application/octet-stream")
+
+
 @app.post("/api/v1/vision/analyze", tags=["OMNI-VISION"])
 async def analyze_image(request: Request):
     """Accepts raw image bytes in request body."""
     image_bytes = await request.body()
-    if not image_bytes:
-        raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    _validate_image_request(request, image_bytes)
     analysis = vision.analyze_scene(image_bytes)
     return {
         "description": analysis.description,
@@ -459,34 +485,26 @@ async def analyze_image(request: Request):
 @app.post("/api/v1/vision/info", tags=["OMNI-VISION"])
 async def image_info(request: Request):
     image_bytes = await request.body()
+    _validate_image_request(request, image_bytes)
     return vision.image_info(image_bytes)
 
 
 # ── GANE AGENT LAYER ─────────────────────────────────────────────────────────
 
-from brainiac.agent import AgentRouter  # noqa: E402
-
-_agent_router = AgentRouter(
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-    telem=telem,
-    creative=creative,
-    auto_approve=True,
-)
-
-
 @app.post("/api/v1/agent/run", tags=["GANE-AGENT"])
 async def agent_run(request: Request):
     """
     Dispatch a prompt to the GANE multi-agent system.
-    Automatically routes to the best specialist agent (telemetry or medical).
+    Routes to the best specialist agent (telemetry, medical, navigation).
 
-    Body: {"prompt": "...", "agent": "telemetry|medical|auto"}
+    Body: {"prompt": "...", "force_agent": "telemetry|medical|navigation"}
     """
     body = await request.json()
     prompt = body.get("prompt", "")
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    result = await _agent_router.run(prompt)
+    force_agent = body.get("force_agent")
+    result = await _agent_router.run(prompt, force_agent=force_agent)
     return {
         "agent_used": result.agent_used,
         "routing_reason": result.routing_reason,
@@ -509,4 +527,15 @@ async def agent_diagnostics():
 @app.get("/api/v1/agent/memory", tags=["GANE-AGENT"])
 async def agent_memory():
     """Return a summary of the agent memory store."""
-    return _agent_router.memory.diagnostics()
+    return await _agent_router.memory.diagnostics()
+
+
+@app.post("/api/v1/agent/route-preview", tags=["GANE-AGENT"])
+async def agent_route_preview(request: Request):
+    """Preview which agent would be selected for a given prompt without executing."""
+    body = await request.json()
+    prompt = body.get("prompt", "")
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+    agent_name, reason = AgentRouter.route(prompt)
+    return {"agent": agent_name, "reason": reason}

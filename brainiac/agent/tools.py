@@ -2,20 +2,17 @@
 GANE Agent Tools — Sandboxed, audited, and reversibility-aware tool registry.
 
 Every tool call goes through:
-  1. Input validation (Pydantic schema)
-  2. Reversibility check (non-reversible → confirmation gate)
-  3. Budget check (cost cap enforcement)
-  4. Execution with timeout
-  5. Audit log entry
-
-Tools are registered with @tool decorator and discovered automatically.
+  1. Reversibility check (non-reversible → confirmation gate)
+  2. Budget check (cost cap enforcement)
+  3. Execution with timeout
+  4. Audit log entry
 """
 from __future__ import annotations
 
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable
 
 
 @dataclass
@@ -23,7 +20,7 @@ class ToolDef:
     """Definition of an agent tool."""
     name: str
     description: str
-    parameters: dict                  # JSON Schema object
+    parameters: dict[str, Any]
     handler: Callable[..., Awaitable[Any]]
     reversible: bool = True
     timeout_s: float = 30.0
@@ -46,10 +43,9 @@ class ToolRegistry:
     Central registry for all agent tools.
 
     Features:
-    - Reversibility gate (non-reversible tools require explicit confirm=True)
+    - Reversibility gate (non-reversible tools require explicit confirmation)
     - Per-call timeout
-    - Budget ceiling enforcement
-    - Concurrent call tracking
+    - Daily budget ceiling enforcement
     """
 
     def __init__(
@@ -67,7 +63,14 @@ class ToolRegistry:
     def register(self, tool: ToolDef) -> None:
         self._tools[tool.name] = tool
 
-    def list_tools(self) -> list[dict]:
+    def has(self, name: str) -> bool:
+        return name in self._tools
+
+    def is_reversible(self, name: str) -> bool:
+        tool = self._tools.get(name)
+        return tool.reversible if tool else True
+
+    def list_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": t.name,
@@ -78,7 +81,7 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
-    def get_schema(self) -> list[dict]:
+    def get_schema(self) -> list[dict[str, Any]]:
         """Return Anthropic tool_use format schemas."""
         return [
             {
@@ -102,14 +105,12 @@ class ToolRegistry:
 
         tool = self._tools[name]
 
-        # Budget check
         if self._spent_usd + cost_hint > self.budget_usd:
             return ToolResult(
                 tool_name=name, success=False,
                 error=f"Daily budget exceeded (${self._spent_usd:.4f} / ${self.budget_usd})",
             )
 
-        # Confirmation gate for non-reversible tools
         if not tool.reversible and not self.auto_approve and not skip_confirm:
             approved = await self._confirm_callback(name, inputs)
             if not approved:
@@ -144,13 +145,12 @@ class ToolRegistry:
 
     @staticmethod
     async def _default_confirm(name: str, inputs: dict) -> bool:
-        """Default: auto-deny non-reversible tools in non-interactive mode."""
         return False
 
     def reset_budget(self) -> None:
         self._spent_usd = 0.0
 
-    def diagnostics(self) -> dict:
+    def diagnostics(self) -> dict[str, Any]:
         return {
             "tools": len(self._tools),
             "tool_names": list(self._tools.keys()),

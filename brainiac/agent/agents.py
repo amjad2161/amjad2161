@@ -1,27 +1,28 @@
 """
-GANE Specialized Agents — Domain-specific agents built on the AgentLoop.
+GANE Specialized Agents — domain-specific agents on top of AgentLoop.
 
-Agents:
-  - TelemetryAnalystAgent : reads sensor data, detects anomalies, creates issues
-  - MedicalContentAgent   : generates medical educational content and AHA-compliant protocols
+Built-in agents:
+  - TelemetryAnalystAgent : reads sensor data, detects anomalies, files reports
+  - MedicalContentAgent   : generates AHA-compliant medical educational content
+  - NavigationAgent       : satellite-fused routing + mission planning
 """
 from __future__ import annotations
 
-import asyncio
-import os
 import time
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import TYPE_CHECKING
 
 import structlog
 
-from .loop import AgentLoop, AgentConfig
-from .memory import AgentMemory, Fact, FactSource
+from .base import BaseAgent
+from .loop import AgentConfig, AgentLoop
+from .memory import AgentMemory, Episode, FactSource
 from .tools import ToolDef, ToolRegistry
 
 if TYPE_CHECKING:
-    from brainiac.core.telemetry_hub import TelemetryHub
-    from brainiac.core.orbital_nav import OrbitalNav
     from brainiac.core.creative_engine import CreativeEngine
+    from brainiac.core.orbital_nav import OrbitalNav
+    from brainiac.core.telemetry_hub import TelemetryHub
 
 log = structlog.get_logger("brainiac.agent.agents")
 
@@ -29,13 +30,13 @@ log = structlog.get_logger("brainiac.agent.agents")
 # ── Telemetry Analyst Agent ───────────────────────────────────────────────────
 
 _TELEMETRY_SYSTEM = """\
-You are GANE Telemetry Analyst — an expert sensor data engineer embedded in the BRAINIAC system.
+You are GANE Telemetry Analyst — an expert sensor data engineer embedded in BRAINIAC.
 
 Your job:
 1. Analyze incoming telemetry streams for anomalies (spikes, drops, flatlines).
 2. Correlate anomalies across multiple sensors to identify root causes.
 3. Generate concise incident reports with severity, affected sensors, and recommended actions.
-4. Use the `query_telemetry` tool to retrieve live data and `create_anomaly_report` to log findings.
+4. Use `query_telemetry` to retrieve live data and `create_anomaly_report` to log findings.
 
 Respond factually. Cite sensor IDs and timestamps. Never speculate without data.
 """
@@ -48,18 +49,12 @@ def _build_telemetry_tools(
     registry = ToolRegistry(auto_approve=auto_approve)
 
     async def query_telemetry(sensor_id: str | None = None, window_s: int = 3600) -> dict:
-        """Retrieve recent telemetry summary for a sensor (or all sensors)."""
         if telem is None:
-            # Synthetic fallback when no live hub is wired
             return {
                 "sensor_id": sensor_id or "ALL",
                 "window_s": window_s,
-                "readings": 120,
-                "mean": 22.4,
-                "std_dev": 0.8,
-                "min": 21.1,
-                "max": 24.7,
-                "anomalies": [],
+                "readings": 120, "mean": 22.4, "std_dev": 0.8,
+                "min": 21.1, "max": 24.7, "anomalies": [],
                 "note": "synthetic_fallback",
             }
         summary = telem.diagnostics()
@@ -69,26 +64,18 @@ def _build_telemetry_tools(
         return streams
 
     async def create_anomaly_report(
-        sensor_id: str,
-        severity: str,
-        description: str,
-        recommended_action: str,
+        sensor_id: str, severity: str, description: str, recommended_action: str,
     ) -> dict:
-        """Create and log an anomaly incident report."""
         report = {
-            "incident_id": f"INC-{int(time.time())}",
-            "sensor_id": sensor_id,
-            "severity": severity,
-            "description": description,
-            "recommended_action": recommended_action,
-            "created_at": time.time(),
-            "status": "OPEN",
+            "incident_id": f"INC-{uuid.uuid4().hex[:8]}",
+            "sensor_id": sensor_id, "severity": severity,
+            "description": description, "recommended_action": recommended_action,
+            "created_at": time.time(), "status": "OPEN",
         }
         log.warning("telemetry_analyst.anomaly_report", **report)
         return report
 
     async def acknowledge_anomaly(incident_id: str, notes: str = "") -> dict:
-        """Acknowledge an anomaly incident (non-reversible)."""
         return {"incident_id": incident_id, "status": "ACKNOWLEDGED", "notes": notes}
 
     registry.register(ToolDef(
@@ -104,7 +91,6 @@ def _build_telemetry_tools(
         handler=query_telemetry,
         reversible=True,
     ))
-
     registry.register(ToolDef(
         name="create_anomaly_report",
         description="Create and log an anomaly incident report",
@@ -121,7 +107,6 @@ def _build_telemetry_tools(
         handler=create_anomaly_report,
         reversible=True,
     ))
-
     registry.register(ToolDef(
         name="acknowledge_anomaly",
         description="Mark an anomaly incident as acknowledged",
@@ -136,17 +121,13 @@ def _build_telemetry_tools(
         handler=acknowledge_anomaly,
         reversible=False,
     ))
-
     return registry
 
 
-class TelemetryAnalystAgent:
-    """
-    G.A.N.E Telemetry Analyst — reads sensor streams, flags anomalies,
-    produces structured incident reports.
+class TelemetryAnalystAgent(BaseAgent):
+    """G.A.N.E Telemetry Analyst — wires into TelemetryHub for live data."""
 
-    Wires directly into BRAINIAC's TelemetryHub for live data.
-    """
+    name = "telemetry-analyst"
 
     def __init__(
         self,
@@ -157,9 +138,8 @@ class TelemetryAnalystAgent:
     ) -> None:
         self.memory = memory or AgentMemory()
         config = AgentConfig(
-            name="telemetry-analyst",
+            name=self.name,
             system_prompt=_TELEMETRY_SYSTEM,
-            model="claude-sonnet-4-6",
             fact_source=FactSource.TELEMETRY,
             auto_approve_tools=auto_approve,
         )
@@ -167,20 +147,17 @@ class TelemetryAnalystAgent:
         self._loop = AgentLoop(config, tools, self.memory, api_key=api_key)
         log.info("telemetry_analyst.init")
 
-    async def analyze(self, prompt: str = "Analyze the last 60 minutes of telemetry for anomalies."):
-        """Run a full analysis and return the episode."""
+    async def run(self, prompt: str) -> Episode:
         return await self._loop.run(prompt)
 
-    async def stream_analysis(self, prompt: str):
-        """Stream tokens from the analysis (no tool calls)."""
-        async for token in self._loop.stream(prompt):
-            yield token
+    async def analyze(self, prompt: str = "Analyze the last 60 minutes of telemetry for anomalies.") -> Episode:
+        return await self.run(prompt)
 
 
 # ── Medical Content Agent ─────────────────────────────────────────────────────
 
 _MEDICAL_SYSTEM = """\
-You are GANE Medical Content — an expert medical educator embedded in the BRAINIAC system.
+You are GANE Medical Content — an expert medical educator embedded in BRAINIAC.
 
 Specializations:
 - AHA (American Heart Association) resuscitation guidelines (ACLS/BLS/PALS)
@@ -192,8 +169,15 @@ Guidelines:
 - Always cite the guideline version (e.g., "AHA 2020 ACLS Guidelines").
 - Include safety disclaimers for drug dosages.
 - Content is for EDUCATIONAL PURPOSES ONLY — not direct clinical advice.
-- Use the `generate_content` tool to produce structured educational materials.
+- Use `generate_content` to produce structured educational materials.
 """
+
+# ACLS standard doses (educational reference). Fixed constant — built once.
+_ACLS_DOSES: dict[str, dict] = {
+    "epinephrine": {"dose_mg_per_kg": 0.01, "max_mg": 1.0, "route": "IV/IO"},
+    "amiodarone":  {"dose_mg_per_kg": 5.0,  "max_mg": 300.0, "route": "IV"},
+    "atropine":    {"dose_mg_per_kg": 0.02, "max_mg": 3.0, "route": "IV/IO"},
+}
 
 
 def _build_medical_tools(
@@ -203,56 +187,36 @@ def _build_medical_tools(
     registry = ToolRegistry(auto_approve=auto_approve)
 
     async def generate_content(
-        content_type: str,
-        topic: str,
+        content_type: str, topic: str,
         target_audience: str = "healthcare professional",
         format: str = "structured_text",
     ) -> dict:
-        """Generate structured medical educational content."""
         return {
-            "content_type": content_type,
-            "topic": topic,
-            "target_audience": target_audience,
-            "format": format,
+            "content_type": content_type, "topic": topic,
+            "target_audience": target_audience, "format": format,
             "content": f"[{content_type.upper()} on {topic} for {target_audience}] — Generated by GANE Medical",
             "disclaimer": "EDUCATIONAL PURPOSES ONLY. Not a substitute for clinical judgment.",
             "guideline_version": "AHA 2020",
         }
 
-    async def calculate_drug_dose(
-        drug: str,
-        weight_kg: float,
-        indication: str,
-    ) -> dict:
-        """Calculate weight-based drug dose with AHA guideline reference."""
-        # Standard ACLS doses (simplified)
-        _doses = {
-            "epinephrine": {"dose_mg_per_kg": 0.01, "max_mg": 1.0, "route": "IV/IO"},
-            "amiodarone": {"dose_mg_per_kg": 5.0, "max_mg": 300.0, "route": "IV"},
-            "atropine": {"dose_mg_per_kg": 0.02, "max_mg": 3.0, "route": "IV/IO"},
-        }
-        drug_lower = drug.lower()
-        if drug_lower not in _doses:
+    async def calculate_drug_dose(drug: str, weight_kg: float, indication: str) -> dict:
+        info = _ACLS_DOSES.get(drug.lower())
+        if not info:
             return {"error": f"Drug '{drug}' not in formulary. Consult pharmacist."}
-        info = _doses[drug_lower]
         calculated = min(weight_kg * info["dose_mg_per_kg"], info["max_mg"])
         return {
-            "drug": drug,
-            "weight_kg": weight_kg,
-            "indication": indication,
+            "drug": drug, "weight_kg": weight_kg, "indication": indication,
             "calculated_dose_mg": round(calculated, 2),
-            "max_dose_mg": info["max_mg"],
-            "route": info["route"],
+            "max_dose_mg": info["max_mg"], "route": info["route"],
             "guideline": "AHA 2020 ACLS",
             "disclaimer": "VERIFY WITH PHARMACIST. Educational use only.",
         }
 
     async def generate_badge_label(text: str, style: str = "clinical") -> dict:
-        """Generate an SVG badge for a medical protocol label."""
-        if creative:
-            svg = creative.generate_svg_badge(text, color="#00cc88")
-            return {"svg": svg, "text": text, "style": style}
-        return {"text": text, "style": style, "note": "creative_engine_not_wired"}
+        if creative is None:
+            return {"text": text, "style": style, "svg": None, "note": "creative_engine_not_wired"}
+        svg = creative.generate_svg_badge(text, color="#00cc88")
+        return {"svg": svg, "text": text, "style": style}
 
     registry.register(ToolDef(
         name="generate_content",
@@ -267,10 +231,8 @@ def _build_medical_tools(
             },
             "required": ["content_type", "topic"],
         },
-        handler=generate_content,
-        reversible=True,
+        handler=generate_content, reversible=True,
     ))
-
     registry.register(ToolDef(
         name="calculate_drug_dose",
         description="Calculate weight-based drug dose with AHA guideline reference",
@@ -283,13 +245,11 @@ def _build_medical_tools(
             },
             "required": ["drug", "weight_kg", "indication"],
         },
-        handler=calculate_drug_dose,
-        reversible=True,
+        handler=calculate_drug_dose, reversible=True,
     ))
-
     registry.register(ToolDef(
         name="generate_badge_label",
-        description="Generate an SVG badge for a medical protocol label",
+        description="Generate an SVG badge for a medical protocol label (returns null SVG when CreativeEngine is unavailable)",
         parameters={
             "type": "object",
             "properties": {
@@ -298,17 +258,15 @@ def _build_medical_tools(
             },
             "required": ["text"],
         },
-        handler=generate_badge_label,
-        reversible=True,
+        handler=generate_badge_label, reversible=True,
     ))
-
     return registry
 
 
-class MedicalContentAgent:
-    """
-    G.A.N.E Medical Content — AHA-compliant protocol generator and medical educator.
-    """
+class MedicalContentAgent(BaseAgent):
+    """G.A.N.E Medical Content — AHA-compliant protocol generator."""
+
+    name = "medical-content"
 
     def __init__(
         self,
@@ -319,9 +277,8 @@ class MedicalContentAgent:
     ) -> None:
         self.memory = memory or AgentMemory()
         config = AgentConfig(
-            name="medical-content",
+            name=self.name,
             system_prompt=_MEDICAL_SYSTEM,
-            model="claude-sonnet-4-6",
             fact_source=FactSource.MEDICAL,
             auto_approve_tools=auto_approve,
         )
@@ -329,6 +286,211 @@ class MedicalContentAgent:
         self._loop = AgentLoop(config, tools, self.memory, api_key=api_key)
         log.info("medical_content.init")
 
-    async def generate(self, prompt: str):
-        """Generate medical educational content and return the episode."""
+    async def run(self, prompt: str) -> Episode:
         return await self._loop.run(prompt)
+
+    async def generate(self, prompt: str) -> Episode:
+        return await self.run(prompt)
+
+
+# ── Navigation Agent ──────────────────────────────────────────────────────────
+
+_NAVIGATION_SYSTEM = """\
+You are GANE Navigation — an expert satellite-fused navigation specialist embedded in BRAINIAC.
+
+Capabilities:
+- Multi-modal routing (drive, walk, bike, drone, spacecraft, submarine)
+- ETA estimation with real-world traffic and weather corrections
+- Multi-stop route optimization (greedy TSP)
+- Mission planning (recon, delivery, rescue, surveillance, exploration)
+- Geofence evaluation (circle and polygon)
+
+Guidelines:
+- Cite coordinates in (lat, lon) decimal degrees.
+- Always specify the transport mode used and ETA in minutes.
+- Use `compute_route` for single-leg, `multi_stop_route` for waypoint chains,
+  and `estimate_eta` for fast-path ETA-only queries.
+- Use `evaluate_geofence` to check if a point is inside a circular or polygonal area.
+"""
+
+
+def _build_navigation_tools(
+    nav: "OrbitalNav | None" = None,
+    auto_approve: bool = True,
+) -> ToolRegistry:
+    from brainiac.core.orbital_nav import Coordinate, OrbitalNav, TransportMode
+
+    registry = ToolRegistry(auto_approve=auto_approve)
+    nav_engine = nav or OrbitalNav()
+
+    def _coord(lat: float, lon: float, alt_m: float = 0.0) -> Coordinate:
+        return Coordinate(lat=lat, lon=lon, alt_m=alt_m)
+
+    def _mode(name: str) -> TransportMode:
+        try:
+            return TransportMode(name.lower())
+        except ValueError:
+            return TransportMode.DRIVE
+
+    async def estimate_eta(
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        mode: str = "driving",
+    ) -> dict:
+        return nav_engine.estimate_eta(
+            _coord(origin_lat, origin_lon),
+            _coord(dest_lat, dest_lon),
+            mode=_mode(mode),
+        )
+
+    async def compute_route(
+        origin_lat: float, origin_lon: float,
+        dest_lat: float, dest_lon: float,
+        mode: str = "driving",
+        alternatives: int = 1,
+    ) -> dict:
+        route = await nav_engine.route(
+            _coord(origin_lat, origin_lon),
+            _coord(dest_lat, dest_lon),
+            mode=_mode(mode),
+            alternatives=alternatives,
+        )
+        return route.summary()
+
+    async def multi_stop_route(
+        origin_lat: float, origin_lon: float,
+        stops: list[list[float]],
+        mode: str = "driving",
+    ) -> dict:
+        coords = [_coord(s[0], s[1]) for s in stops]
+        legs = await nav_engine.route_multi_stop(
+            _coord(origin_lat, origin_lon), coords, mode=_mode(mode),
+        )
+        return {
+            "legs": len(legs),
+            "total_km": round(sum(leg.distance_km for leg in legs), 2),
+            "total_minutes": round(sum(leg.eta_minutes for leg in legs), 1),
+            "summaries": [leg.summary() for leg in legs],
+        }
+
+    async def evaluate_geofence(
+        point_lat: float, point_lon: float,
+        center_lat: float | None = None, center_lon: float | None = None,
+        radius_m: float | None = None,
+        polygon: list[list[float]] | None = None,
+    ) -> dict:
+        point = _coord(point_lat, point_lon)
+        if polygon:
+            poly = [_coord(p[0], p[1]) for p in polygon]
+            inside = nav_engine.geofence_polygon(point, poly)
+            return {"inside": inside, "type": "polygon", "vertices": len(poly)}
+        if center_lat is not None and center_lon is not None and radius_m is not None:
+            inside = nav_engine.geofence_circle(point, _coord(center_lat, center_lon), radius_m)
+            return {"inside": inside, "type": "circle", "radius_m": radius_m}
+        return {"error": "Provide either (center+radius) or polygon"}
+
+    async def get_position() -> dict:
+        coord = await nav_engine.get_position()
+        return {
+            "lat": coord.lat, "lon": coord.lon, "alt_m": coord.alt_m,
+            "accuracy_m": coord.accuracy_m, "timestamp": coord.timestamp,
+        }
+
+    registry.register(ToolDef(
+        name="estimate_eta",
+        description="Fast ETA estimate using haversine + typical speeds",
+        parameters={
+            "type": "object",
+            "properties": {
+                "origin_lat": {"type": "number"}, "origin_lon": {"type": "number"},
+                "dest_lat": {"type": "number"},   "dest_lon":   {"type": "number"},
+                "mode": {"type": "string", "enum": ["driving", "walking", "cycling", "drone", "spacecraft", "submarine"]},
+            },
+            "required": ["origin_lat", "origin_lon", "dest_lat", "dest_lon"],
+        },
+        handler=estimate_eta, reversible=True,
+    ))
+    registry.register(ToolDef(
+        name="compute_route",
+        description="Compute an optimal route between two coordinates with full waypoint detail",
+        parameters={
+            "type": "object",
+            "properties": {
+                "origin_lat": {"type": "number"}, "origin_lon": {"type": "number"},
+                "dest_lat": {"type": "number"},   "dest_lon":   {"type": "number"},
+                "mode": {"type": "string", "enum": ["driving", "walking", "cycling", "drone", "spacecraft", "submarine"]},
+                "alternatives": {"type": "integer", "default": 1},
+            },
+            "required": ["origin_lat", "origin_lon", "dest_lat", "dest_lon"],
+        },
+        handler=compute_route, reversible=True, timeout_s=15.0,
+    ))
+    registry.register(ToolDef(
+        name="multi_stop_route",
+        description="Optimize a route through multiple stops (nearest-neighbour TSP)",
+        parameters={
+            "type": "object",
+            "properties": {
+                "origin_lat": {"type": "number"}, "origin_lon": {"type": "number"},
+                "stops": {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                },
+                "mode": {"type": "string"},
+            },
+            "required": ["origin_lat", "origin_lon", "stops"],
+        },
+        handler=multi_stop_route, reversible=True, timeout_s=30.0,
+    ))
+    registry.register(ToolDef(
+        name="evaluate_geofence",
+        description="Check whether a point lies inside a circular or polygonal geofence",
+        parameters={
+            "type": "object",
+            "properties": {
+                "point_lat": {"type": "number"}, "point_lon": {"type": "number"},
+                "center_lat": {"type": "number"}, "center_lon": {"type": "number"},
+                "radius_m": {"type": "number"},
+                "polygon": {"type": "array", "items": {"type": "array", "items": {"type": "number"}}},
+            },
+            "required": ["point_lat", "point_lon"],
+        },
+        handler=evaluate_geofence, reversible=True,
+    ))
+    registry.register(ToolDef(
+        name="get_position",
+        description="Return the current navigation position with accuracy",
+        parameters={"type": "object", "properties": {}},
+        handler=get_position, reversible=True,
+    ))
+    return registry
+
+
+class NavigationAgent(BaseAgent):
+    """G.A.N.E Navigation — satellite-fused routing and mission planning."""
+
+    name = "navigation"
+
+    def __init__(
+        self,
+        memory: AgentMemory | None = None,
+        nav: "OrbitalNav | None" = None,
+        api_key: str | None = None,
+        auto_approve: bool = True,
+    ) -> None:
+        self.memory = memory or AgentMemory()
+        config = AgentConfig(
+            name=self.name,
+            system_prompt=_NAVIGATION_SYSTEM,
+            fact_source=FactSource.NAVIGATION,
+            auto_approve_tools=auto_approve,
+        )
+        tools = _build_navigation_tools(nav, auto_approve)
+        self._loop = AgentLoop(config, tools, self.memory, api_key=api_key)
+        log.info("navigation_agent.init")
+
+    async def run(self, prompt: str) -> Episode:
+        return await self._loop.run(prompt)
+
+    async def plan(self, prompt: str) -> Episode:
+        return await self.run(prompt)

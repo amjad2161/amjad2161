@@ -366,39 +366,124 @@ class OrbitalNav:
             j = i
         return inside
 
-    # ── Multi-stop Routing (Greedy TSP) ───────────────────────────────────────
+    # ── Multi-stop Routing (Greedy TSP + 2-opt refinement) ───────────────────
 
     async def route_multi_stop(
         self,
         origin: Coordinate,
         stops: list[Coordinate],
         mode: TransportMode = TransportMode.DRIVE,
+        optimize: bool = True,
     ) -> list[Route]:
         """
-        Compute a nearest-neighbour route through multiple stops.
-        Returns a list of per-leg routes.
+        Compute a route through multiple stops.
+
+        With optimize=True (default), runs nearest-neighbour to build an initial
+        order then refines with 2-opt to reduce total haversine distance.
+        With optimize=False, returns the pure nearest-neighbour route.
         """
         if not stops:
             return []
 
-        remaining = list(stops)
+        order = self._nearest_neighbour_order(origin, stops)
+        if optimize and len(stops) >= 4:
+            order = self._two_opt_refine(origin, order)
+
         current = origin
         legs: list[Route] = []
-
-        while remaining:
-            # Pick the nearest remaining stop
-            nearest = min(remaining, key=lambda c: current.distance_to(c))
-            leg = await self.route(current, nearest, mode=mode, alternatives=0)
+        for stop in order:
+            leg = await self.route(current, stop, mode=mode, alternatives=0)
             legs.append(leg)
-            current = nearest
-            remaining.remove(nearest)
+            current = stop
 
         log.info(
             "orbital_nav.multi_stop",
             legs=len(legs),
-            total_km=round(sum(l.distance_km for l in legs), 2),
+            total_km=round(sum(leg.distance_km for leg in legs), 2),
+            optimized=optimize,
         )
         return legs
+
+    @staticmethod
+    def _nearest_neighbour_order(
+        origin: Coordinate, stops: list[Coordinate],
+    ) -> list[Coordinate]:
+        remaining = list(stops)
+        current = origin
+        order: list[Coordinate] = []
+        while remaining:
+            nearest = min(remaining, key=lambda c: current.distance_to(c))
+            order.append(nearest)
+            current = nearest
+            remaining.remove(nearest)
+        return order
+
+    @staticmethod
+    def _route_total_distance(origin: Coordinate, order: list[Coordinate]) -> float:
+        prev = origin
+        total = 0.0
+        for stop in order:
+            total += prev.distance_to(stop)
+            prev = stop
+        return total
+
+    @classmethod
+    def _two_opt_refine(
+        cls, origin: Coordinate, order: list[Coordinate], max_iterations: int = 50,
+    ) -> list[Coordinate]:
+        """2-opt local search to reduce total haversine distance."""
+        best = list(order)
+        best_dist = cls._route_total_distance(origin, best)
+        n = len(best)
+        for _ in range(max_iterations):
+            improved = False
+            for i in range(n - 1):
+                for j in range(i + 1, n):
+                    candidate = best[:i] + best[i:j + 1][::-1] + best[j + 1:]
+                    dist = cls._route_total_distance(origin, candidate)
+                    if dist + 1e-6 < best_dist:
+                        best, best_dist = candidate, dist
+                        improved = True
+            if not improved:
+                break
+        return best
+
+    # ── No-fly Zone Avoidance ────────────────────────────────────────────────
+
+    def is_route_clear(
+        self,
+        route: Route,
+        no_fly_zones: list[tuple[Coordinate, float]],
+    ) -> tuple[bool, list[int]]:
+        """
+        Check whether a route's geometry passes through any no-fly zone.
+
+        Returns (is_clear, conflicting_zone_indices).
+        no_fly_zones: list of (center, radius_m) tuples.
+        """
+        conflicts: list[int] = []
+        for idx, (center, radius_m) in enumerate(no_fly_zones):
+            for waypoint in route.geometry:
+                if self.geofence_circle(waypoint, center, radius_m):
+                    conflicts.append(idx)
+                    break
+        return len(conflicts) == 0, conflicts
+
+    # ── Traffic / Weather-Aware ETA Adjustment ───────────────────────────────
+
+    def adjust_eta_for_conditions(
+        self,
+        base_eta_seconds: float,
+        traffic_factor: float = 1.0,
+        weather_factor: float = 1.0,
+    ) -> float:
+        """
+        Apply multipliers to a base ETA.
+
+        traffic_factor: 1.0=clear, 1.3=moderate, 1.7=heavy, 2.5=jam
+        weather_factor: 1.0=clear, 1.15=rain, 1.4=snow, 1.8=storm
+        """
+        return base_eta_seconds * max(0.1, traffic_factor) * max(0.1, weather_factor)
 
     # ── ETA-only (fast path, no full route computation) ──────────────────────
 

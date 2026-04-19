@@ -7,7 +7,9 @@ audio composition, and real-time rendering pipeline hooks.
 from __future__ import annotations
 
 import base64
+import html
 import io
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -181,8 +183,6 @@ class CreativeEngine:
 
     def generate_svg_badge(self, text: str, color: str = "#00f5ff") -> str:
         """Generate a simple SVG status badge."""
-        import html
-        import re
         # Validate color: only allow valid hex colors to prevent attribute injection
         if not re.match(r"^#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?$", color):
             color = "#00f5ff"

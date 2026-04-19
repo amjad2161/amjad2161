@@ -96,3 +96,83 @@ def test_diagnostics(nav):
     assert d["status"] == "ONLINE"
     assert d["precision_mode"] == "rtk"
     assert len(d["gnss_systems"]) == 5
+
+
+# ── Advanced Navigation Features ──────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_two_opt_refinement_does_not_worsen():
+    nav = OrbitalNav()
+    origin = Coordinate(lat=32.0, lon=34.0)
+    stops = [
+        Coordinate(lat=32.5, lon=34.5),
+        Coordinate(lat=32.1, lon=34.1),
+        Coordinate(lat=32.9, lon=34.9),
+        Coordinate(lat=32.3, lon=34.3),
+    ]
+    nn_order  = OrbitalNav._nearest_neighbour_order(origin, stops)
+    nn_dist   = OrbitalNav._route_total_distance(origin, nn_order)
+    opt_order = OrbitalNav._two_opt_refine(origin, nn_order)
+    opt_dist  = OrbitalNav._route_total_distance(origin, opt_order)
+    assert opt_dist <= nn_dist + 1e-6
+
+
+def test_route_clear_returns_no_conflicts_when_outside_zones():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[],
+        total_distance_m=1000,
+        total_duration_s=60,
+        mode=TransportMode.DRIVE,
+        precision=PrecisionMode.RTK,
+        geometry=[Coordinate(lat=32.0, lon=34.0), Coordinate(lat=33.0, lon=35.0)],
+    )
+    no_fly = [(Coordinate(lat=10.0, lon=10.0), 1000.0)]
+    is_clear, conflicts = nav.is_route_clear(route, no_fly)
+    assert is_clear is True
+    assert conflicts == []
+
+
+def test_route_blocked_by_no_fly_zone():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[],
+        total_distance_m=1000,
+        total_duration_s=60,
+        mode=TransportMode.DRONE,
+        precision=PrecisionMode.RTK,
+        geometry=[
+            Coordinate(lat=32.0, lon=34.0),
+            Coordinate(lat=32.5, lon=34.5),
+            Coordinate(lat=33.0, lon=35.0),
+        ],
+    )
+    no_fly = [(Coordinate(lat=32.5, lon=34.5), 5000.0)]
+    is_clear, conflicts = nav.is_route_clear(route, no_fly)
+    assert is_clear is False
+    assert conflicts == [0]
+
+
+def test_eta_adjustment_traffic_only():
+    nav = OrbitalNav()
+    base = 600.0   # 10 minutes
+    assert nav.adjust_eta_for_conditions(base, traffic_factor=1.5) == pytest.approx(900.0)
+
+
+def test_eta_adjustment_combined():
+    nav = OrbitalNav()
+    base = 600.0
+    adjusted = nav.adjust_eta_for_conditions(base, traffic_factor=1.3, weather_factor=1.4)
+    assert adjusted == pytest.approx(600.0 * 1.3 * 1.4)
+
+
+def test_eta_adjustment_clamps_negative_factors():
+    nav = OrbitalNav()
+    base = 600.0
+    # Even with zero/negative inputs it stays positive (min 0.1)
+    adjusted = nav.adjust_eta_for_conditions(base, traffic_factor=0.0, weather_factor=-1.0)
+    assert adjusted > 0

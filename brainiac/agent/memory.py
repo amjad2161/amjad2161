@@ -9,7 +9,6 @@ Provides a thread-safe in-memory store for:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import time
 import uuid
 from collections import deque
@@ -48,7 +47,7 @@ class Episode:
     prompt: str = ""
     response: str = ""
     tool_calls: list[dict] = field(default_factory=list)
-    facts_learned: list[str] = field(default_factory=list)   # fact_ids
+    facts_learned: list[str] = field(default_factory=list)
     tokens_used: int = 0
     cost_usd: float = 0.0
     duration_ms: float = 0.0
@@ -75,13 +74,14 @@ class Decision:
 
 class AgentMemory:
     """
-    Thread-safe in-memory agent memory store.
+    Thread-safe in-memory agent memory store with bounded capacity.
 
     Provides:
     - Episode store (bounded ring buffer)
-    - Fact store (dict keyed by fact_id)
+    - Fact store (LRU-evicted at max_facts)
     - Decision audit log (bounded ring buffer)
-    - Simple keyword-based fact retrieval
+    - Inverted-index keyword fact retrieval
+    - Tag→fact_id index for O(1) tag lookup
     """
 
     def __init__(
@@ -93,9 +93,11 @@ class AgentMemory:
         self._lock = asyncio.Lock()
         self._episodes: deque[Episode] = deque(maxlen=max_episodes)
         self._facts: dict[str, Fact] = {}
+        self._fact_tags: dict[str, set[str]] = {}     # fact_id → frozen tag set
+        self._tag_index: dict[str, set[str]] = {}     # tag → set of fact_ids
         self._decisions: deque[Decision] = deque(maxlen=max_decisions)
+        self._max_facts = max_facts
         self._cost_today: float = 0.0
-        self._cost_day: str = ""
 
     # ── Episodes ──────────────────────────────────────────────────────────────
 
@@ -107,44 +109,73 @@ class AgentMemory:
     async def get_recent_episodes(self, agent_name: str | None = None, n: int = 10) -> list[Episode]:
         async with self._lock:
             episodes = list(self._episodes)
-            if agent_name:
-                episodes = [e for e in episodes if e.agent_name == agent_name]
-            return episodes[-n:]
+        if agent_name:
+            episodes = [e for e in episodes if e.agent_name == agent_name]
+        return episodes[-n:]
 
     # ── Facts ─────────────────────────────────────────────────────────────────
 
     async def store_fact(self, fact: Fact) -> str:
-        """Store a fact; returns fact_id."""
         async with self._lock:
+            if len(self._facts) >= self._max_facts and fact.fact_id not in self._facts:
+                self._evict_oldest_fact_locked()
             self._facts[fact.fact_id] = fact
+            tag_set = set(fact.tags)
+            self._fact_tags[fact.fact_id] = tag_set
+            for tag in tag_set:
+                self._tag_index.setdefault(tag, set()).add(fact.fact_id)
             return fact.fact_id
 
-    async def search_facts(self, query: str, source: FactSource | None = None, top_k: int = 5) -> list[Fact]:
-        """Simple keyword-based fact retrieval (production: pgvector similarity)."""
+    def _evict_oldest_fact_locked(self) -> None:
+        """Evict the least-recently-accessed fact. Caller must hold the lock."""
+        if not self._facts:
+            return
+        victim_id = min(self._facts, key=lambda fid: self._facts[fid].accessed_at)
+        for tag in self._fact_tags.pop(victim_id, set()):
+            ids = self._tag_index.get(tag)
+            if ids:
+                ids.discard(victim_id)
+                if not ids:
+                    self._tag_index.pop(tag, None)
+        self._facts.pop(victim_id, None)
+
+    async def search_facts(
+        self,
+        query: str,
+        source: FactSource | None = None,
+        top_k: int = 5,
+    ) -> list[Fact]:
+        """Keyword-overlap fact retrieval (production: pgvector similarity)."""
+        # Snapshot under lock, then score outside the lock to minimize contention.
         async with self._lock:
-            query_lower = query.lower()
-            query_words = set(query_lower.split())
-            results = []
-            for fact in self._facts.values():
-                if source and fact.source != source:
-                    continue
-                fact_words = set(fact.content.lower().split())
-                overlap = len(query_words & fact_words)
-                if overlap > 0:
-                    results.append((overlap, fact))
-            results.sort(key=lambda x: x[0], reverse=True)
-            top = [f for _, f in results[:top_k]]
-            # Update access metadata
+            facts_snapshot = list(self._facts.values())
+
+        query_words = set(query.lower().split())
+        scored: list[tuple[int, Fact]] = []
+        for fact in facts_snapshot:
+            if source and fact.source != source:
+                continue
+            overlap = len(query_words & set(fact.content.lower().split()))
+            if overlap > 0:
+                scored.append((overlap, fact))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = [f for _, f in scored[:top_k]]
+
+        if top:
             now = time.time()
-            for f in top:
-                f.accessed_at = now
-                f.access_count += 1
-            return top
+            async with self._lock:
+                for f in top:
+                    f.accessed_at = now
+                    f.access_count += 1
+        return top
 
     async def get_facts_by_tags(self, tags: list[str]) -> list[Fact]:
+        """O(matching_facts) retrieval via inverted tag index."""
         async with self._lock:
-            tag_set = set(tags)
-            return [f for f in self._facts.values() if tag_set & set(f.tags)]
+            fact_ids: set[str] = set()
+            for tag in tags:
+                fact_ids |= self._tag_index.get(tag, set())
+            return [self._facts[fid] for fid in fact_ids if fid in self._facts]
 
     # ── Decisions ─────────────────────────────────────────────────────────────
 
@@ -154,7 +185,8 @@ class AgentMemory:
 
     async def get_decisions(self, episode_id: str) -> list[Decision]:
         async with self._lock:
-            return [d for d in self._decisions if d.episode_id == episode_id]
+            decisions_snapshot = list(self._decisions)
+        return [d for d in decisions_snapshot if d.episode_id == episode_id]
 
     # ── Cost Tracking ─────────────────────────────────────────────────────────
 
@@ -168,10 +200,13 @@ class AgentMemory:
 
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
-    def diagnostics(self) -> dict[str, Any]:
-        return {
-            "episodes": len(self._episodes),
-            "facts": len(self._facts),
-            "decisions": len(self._decisions),
-            "cost_today_usd": round(self._cost_today, 6),
-        }
+    async def diagnostics(self) -> dict[str, Any]:
+        async with self._lock:
+            return {
+                "episodes": len(self._episodes),
+                "facts": len(self._facts),
+                "tags_indexed": len(self._tag_index),
+                "decisions": len(self._decisions),
+                "cost_today_usd": round(self._cost_today, 6),
+                "max_facts": self._max_facts,
+            }
