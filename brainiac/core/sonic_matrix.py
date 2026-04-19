@@ -94,7 +94,10 @@ class SonicMatrix:
         if not tokens:
             return False
         nav_words = {"turn", "left", "right", "meters", "meter", "km", "straight", "exit"}
-        return all(ord(ch) < 128 for ch in text) and any(word in nav_words for word in tokens)
+        has_nav_word = any(word in nav_words for word in tokens)
+        if not has_nav_word:
+            return False
+        return text.isascii()
 
     # ── Language Detection ────────────────────────────────────────────────────
 

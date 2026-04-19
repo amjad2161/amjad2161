@@ -110,6 +110,8 @@ async def security_middleware(request: Request, call_next):
             body_bytes = await request.body()
             if len(body_bytes) > _MAX_BODY_BYTES:
                 return JSONResponse(status_code=413, content={"error": "Payload too large"})
+            # Limit inspection bytes to keep middleware scan latency bounded under load.
+            # Payload size is still strictly enforced on the full body via _MAX_BODY_BYTES.
             body_str = body_bytes[:_MAX_SCAN_BYTES].decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
