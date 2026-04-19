@@ -19,7 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, INS,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
@@ -49,6 +49,7 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
+ins     = INS()
 
 
 @asynccontextmanager

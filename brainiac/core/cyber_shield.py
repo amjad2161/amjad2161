@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -240,6 +241,18 @@ class CyberShield:
             hardening_recommendations=recommendations,
             risk_score=risk_score,
         )
+
+    def detect_gps_spoofing(
+        self,
+        expected_lat: float,
+        expected_lon: float,
+        observed_lat: float,
+        observed_lon: float,
+        max_deviation_deg: float = 0.01,
+    ) -> bool:
+        """Return True when observed GNSS fix deviates beyond safe threshold."""
+        deviation = math.hypot(observed_lat - expected_lat, observed_lon - expected_lon)
+        return deviation > max_deviation_deg
 
     # ── Internals ─────────────────────────────────────────────────────────────
 

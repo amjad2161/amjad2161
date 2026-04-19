@@ -8,6 +8,9 @@ from .telemetry_hub import TelemetryHub
 from .cyber_shield import CyberShield
 from .creative_engine import CreativeEngine
 from .omni_vision import OmniVision
+from .ins import INS
+from .localization import Localization
+from .medical_protocols import MedicalProtocols, DrugRoute
 
 __all__ = [
     "NeuroCore",
@@ -19,4 +22,8 @@ __all__ = [
     "CyberShield",
     "CreativeEngine",
     "OmniVision",
+    "INS",
+    "Localization",
+    "MedicalProtocols",
+    "DrugRoute",
 ]

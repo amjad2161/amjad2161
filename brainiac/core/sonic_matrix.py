@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import os
 import time
 from dataclasses import dataclass
@@ -96,6 +97,20 @@ class SonicMatrix:
             from langdetect import detect, detect_langs
             lang = detect(text)
             probabilities = detect_langs(text)
+            # langdetect can misclassify short ASCII navigation phrases
+            # ("Turn left in 200 meters") as Dutch. Prefer English fallback
+            # for plain Latin text when confidence is weak.
+            if (
+                lang != "en"
+                and self.default_lang == "en"
+                and re.fullmatch(r"[A-Za-z0-9\s,.'\-!?():;/]+", text or "")
+                and len(text.split()) >= 3
+                and (
+                    not probabilities
+                    or float(probabilities[0].prob) < 0.90
+                )
+            ):
+                lang = "en"
             return {
                 "language": lang,
                 "language_name": LANGUAGE_MAP.get(lang, lang),
