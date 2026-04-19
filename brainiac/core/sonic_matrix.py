@@ -93,7 +93,14 @@ class SonicMatrix:
         """Detect language of text using langdetect."""
         lowered = text.lower()
         nav_tokens = ("turn", "left", "right", "meters", "meter", "continue", "exit")
-        if all(ord(c) < 128 for c in text) and any(token in lowered for token in nav_tokens):
+        # Stabilize short, ASCII-only navigation directives that are intermittently
+        # misclassified by langdetect in CI despite deterministic seeding.
+        is_short_directive = len(text) <= 64 and text.replace(" ", "").isalnum()
+        if (
+            all(ord(c) < 128 for c in text)
+            and is_short_directive
+            and any(token in lowered for token in nav_tokens)
+        ):
             return {
                 "language": "en",
                 "language_name": LANGUAGE_MAP.get("en", "en"),
