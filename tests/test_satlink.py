@@ -1,7 +1,10 @@
 """Tests for SATLINK-X module."""
-import time
+
+from __future__ import annotations
+
 import pytest
-from brainiac.core.satlink import SatLink, SOSPriority, BroadcastChannel
+
+from brainiac.core.satlink import BroadcastChannel, SatLink, SOSPriority
 
 
 @pytest.fixture
@@ -38,7 +41,8 @@ async def test_sos_mayday(satlink):
 async def test_sos_routine(satlink):
     await satlink.connect()
     packet = await satlink.send_sos(
-        lat=31.7683, lon=35.2137,
+        lat=31.7683,
+        lon=35.2137,
         message="Routine check",
         priority=SOSPriority.ROUTINE,
     )
@@ -68,7 +72,7 @@ def test_pqc_encrypt_deterministic(satlink):
     enc1 = satlink._pqc_encrypt(plain)
     enc2 = satlink._pqc_encrypt(plain)
     assert enc1 == enc2
-    assert plain in enc1   # passthrough in stub
+    assert plain in enc1  # passthrough in stub
 
 
 def test_diagnostics(satlink):

@@ -1,6 +1,10 @@
 """Tests for SONIC-MATRIX module."""
+
+from __future__ import annotations
+
 import pytest
-from brainiac.core.sonic_matrix import SonicMatrix, LANGUAGE_MAP
+
+from brainiac.core.sonic_matrix import SonicMatrix
 
 langdetect = pytest.importorskip("langdetect", reason="langdetect not installed in env")
 
@@ -16,8 +20,12 @@ def test_detect_english(sonic):
     assert result["confidence"] > 0.5
 
 
+def test_detect_ascii_navigation_shortcut(sonic):
+    result = sonic.detect_language("Turn left in 200 meters")
+    assert result["language"] == "en"
+
+
 def test_detect_unknown_graceful(sonic):
-    # Very short text — may fail detection but should not raise
     result = sonic.detect_language("X")
     assert "language" in result
 
@@ -26,7 +34,7 @@ def test_supported_languages(sonic):
     langs = sonic.supported_languages()
     assert isinstance(langs, list)
     assert len(langs) >= 20
-    codes = [l["code"] for l in langs]
+    codes = [lang["code"] for lang in langs]
     assert "en" in codes
     assert "he" in codes
     assert "ar" in codes

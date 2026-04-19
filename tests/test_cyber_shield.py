@@ -1,5 +1,9 @@
 """Tests for CYBER-SHIELD module."""
+
+from __future__ import annotations
+
 import pytest
+
 from brainiac.core.cyber_shield import CyberShield, ThreatLevel, ThreatType
 
 
@@ -9,6 +13,7 @@ def shield():
 
 
 # ── Input Scanning ────────────────────────────────────────────────────────────
+
 
 def test_scan_clean_input(shield):
     assert shield.scan_input("Hello, world! How are you?") is None
@@ -35,6 +40,7 @@ def test_sanitize(shield):
 
 
 # ── Rate Limiting ─────────────────────────────────────────────────────────────
+
 
 def test_rate_limit_within_bounds(shield):
     ip = "10.0.0.1"
@@ -63,6 +69,7 @@ def test_unblock_ip(shield):
 
 # ── File Integrity ────────────────────────────────────────────────────────────
 
+
 def test_verify_clean_file(shield):
     result = shield.verify_file(b"hello world this is a legitimate file")
     assert result["malware_detected"] is False
@@ -78,6 +85,7 @@ def test_verify_empty_file_hash(shield):
 
 # ── HMAC ──────────────────────────────────────────────────────────────────────
 
+
 def test_sign_and_verify(shield):
     payload = {"action": "launch", "target": "moon", "ts": 1234567890}
     sig = shield.sign(payload)
@@ -92,6 +100,7 @@ def test_verify_tampered_payload(shield):
 
 
 # ── Config Audit ──────────────────────────────────────────────────────────────
+
 
 def test_audit_insecure_config(shield):
     bad_config = {

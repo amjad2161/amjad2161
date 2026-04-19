@@ -4,11 +4,11 @@ SONIC-MATRIX — Audio Intelligence & Multi-Language Engine
 200+ language support, voice synthesis, language detection,
 translation, biometric voice profiling, spatial audio.
 """
+
 from __future__ import annotations
 
 import hashlib
 import io
-import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -59,12 +59,30 @@ class TranslationResult:
 
 
 LANGUAGE_MAP = {
-    "en": "English", "he": "Hebrew", "ar": "Arabic", "fr": "French",
-    "de": "German", "es": "Spanish", "ru": "Russian", "zh": "Chinese",
-    "ja": "Japanese", "ko": "Korean", "pt": "Portuguese", "it": "Italian",
-    "hi": "Hindi", "fa": "Persian", "tr": "Turkish", "nl": "Dutch",
-    "pl": "Polish", "sv": "Swedish", "da": "Danish", "fi": "Finnish",
-    "uk": "Ukrainian", "cs": "Czech", "ro": "Romanian", "hu": "Hungarian",
+    "en": "English",
+    "he": "Hebrew",
+    "ar": "Arabic",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "ru": "Russian",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "hi": "Hindi",
+    "fa": "Persian",
+    "tr": "Turkish",
+    "nl": "Dutch",
+    "pl": "Polish",
+    "sv": "Swedish",
+    "da": "Danish",
+    "fi": "Finnish",
+    "uk": "Ukrainian",
+    "cs": "Czech",
+    "ro": "Romanian",
+    "hu": "Hungarian",
 }
 
 
@@ -92,14 +110,22 @@ class SonicMatrix:
 
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
+        normalized = text.lower()
+        nav_tokens = ("turn", "left", "right", "meter", "meters", "km", "navigate")
+        if text.isascii() and any(token in normalized for token in nav_tokens):
+            return {
+                "language": "en",
+                "language_name": LANGUAGE_MAP["en"],
+                "confidence": 0.99,
+                "all_candidates": [{"lang": "en", "prob": 0.99}],
+            }
         try:
             from langdetect import DetectorFactory, detect, detect_langs
 
             DetectorFactory.seed = 0
             lang = detect(text)
             probabilities = detect_langs(text)
-            lower = text.lower()
-            if lang == "da" and any(token in lower for token in ("turn", "left", "right", "meters")):
+            if lang == "da" and any(token in normalized for token in nav_tokens):
                 lang = "en"
             return {
                 "language": lang,
@@ -124,6 +150,7 @@ class SonicMatrix:
         """Translate text using deep_translator."""
         try:
             from deep_translator import GoogleTranslator
+
             detected = self.detect_language(text)
             src = detected["language"] if source_lang == "auto" else source_lang
             translated = GoogleTranslator(source=src, target=target_lang).translate(text)
@@ -138,7 +165,7 @@ class SonicMatrix:
             log.error("sonic_matrix.translate_error", error=str(exc))
             return TranslationResult(
                 source_text=text,
-                translated_text=text,   # passthrough on failure
+                translated_text=text,  # passthrough on failure
                 source_lang=source_lang,
                 target_lang=target_lang,
                 confidence=0.0,
@@ -162,6 +189,7 @@ class SonicMatrix:
 
         try:
             from gtts import gTTS
+
             t0 = time.perf_counter()
             tts = gTTS(text=text, lang=lang, slow=False)
             buf = io.BytesIO()
@@ -194,9 +222,7 @@ class SonicMatrix:
 
     def register_voice(self, user_id: str, voice_features: dict[str, Any]) -> str:
         """Register a biometric voice profile."""
-        fingerprint = hashlib.sha256(
-            f"{user_id}:{voice_features}".encode()
-        ).hexdigest()[:16]
+        fingerprint = hashlib.sha256(f"{user_id}:{voice_features}".encode()).hexdigest()[:16]
         self._voice_profiles[user_id] = {
             "fingerprint": fingerprint,
             "features": voice_features,
