@@ -59,6 +59,10 @@ telem   = TelemetryHub()
 shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
 creative= CreativeEngine()
 vision  = OmniVision()
+
+from brainiac.core.medical_protocols import MedicalProtocols, ProtocolCategory, DrugRoute
+medical = MedicalProtocols()
+
 _agent_router = AgentRouter(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
     telem=telem, creative=creative, nav=nav,
@@ -148,6 +152,9 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(self)"
+    response.headers["X-Permitted-Cross-Domain-Policies"] = "none"
     return response
 
 
@@ -214,7 +221,7 @@ async def think(req: ThinkRequest):
             cached=thought.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal processing error")
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
@@ -241,7 +248,7 @@ async def think_improve(req: ThinkRequest):
             cached=improved.cached,
         )
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal processing error")
 
 
 # ── WebSocket streaming chat ──────────────────────────────────────────────────
@@ -522,7 +529,7 @@ async def register_device(req: RegisterDeviceRequest):
         await nexus.connect_device(req.device_id)
         return device.to_dict()
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail="Invalid device registration parameters")
 
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
@@ -534,6 +541,81 @@ async def list_devices(connected_only: bool = False):
 async def publish_message(req: PublishRequest):
     msg = await nexus.publish(req.device_id, req.topic, req.payload, req.qos)
     return {"msg_id": msg.msg_id, "topic": msg.topic, "timestamp": msg.timestamp}
+
+
+# ── MEDICAL PROTOCOLS ─────────────────────────────────────────────────────────
+
+@app.get("/api/v1/medical/protocols", tags=["MEDICAL"])
+async def list_protocols(category: str | None = None):
+    """List available clinical protocols, optionally filtered by category."""
+    cat = ProtocolCategory(category) if category else None
+    return {"protocols": medical.list_protocols(cat)}
+
+
+@app.get("/api/v1/medical/protocol/{name}", tags=["MEDICAL"])
+async def get_protocol(name: str):
+    """Retrieve a specific clinical protocol with steps and drug references."""
+    proto = medical.get_protocol(name)
+    if not proto:
+        raise HTTPException(status_code=404, detail="Protocol not found")
+    return {
+        "name": proto.name,
+        "category": proto.category.value,
+        "urgency": proto.urgency.value,
+        "reference": proto.reference,
+        "steps": [
+            {"step": s.step_number, "action": s.action, "critical": s.critical,
+             "duration_s": s.duration_s, "notes": s.notes}
+            for s in proto.steps
+        ],
+        "drugs": [
+            {"drug": d.drug, "dose_mg_per_kg": d.dose_mg_per_kg,
+             "max_mg": d.max_dose_mg, "routes": [r.value for r in d.routes]}
+            for d in proto.drugs
+        ],
+        "contraindications": proto.contraindications,
+        "disclaimer": "EDUCATIONAL REFERENCE ONLY — NOT CLINICAL ADVICE",
+    }
+
+
+@app.post("/api/v1/medical/dose", tags=["MEDICAL"])
+async def calculate_dose(drug: str, weight_kg: float, route: str | None = None):
+    """Calculate weight-based drug dosage with safety clamping."""
+    dr = DrugRoute(route) if route else None
+    return medical.calculate_dose(drug, weight_kg, route=dr)
+
+
+@app.post("/api/v1/medical/triage", tags=["MEDICAL"])
+async def triage(
+    heart_rate: int, respiratory_rate: int, systolic_bp: int, gcs: int,
+    spo2: int = 98, temperature_c: float = 37.0,
+):
+    """Field triage scoring based on vital signs. Returns urgency category and recommended protocol."""
+    result = medical.triage(
+        heart_rate=heart_rate, respiratory_rate=respiratory_rate,
+        systolic_bp=systolic_bp, gcs=gcs, spo2=spo2, temperature_c=temperature_c,
+    )
+    return {
+        "category": result.category.value,
+        "score": result.score,
+        "rationale": result.rationale,
+        "recommended_protocol": result.recommended_protocol,
+    }
+
+
+@app.get("/api/v1/medical/drugs", tags=["MEDICAL"])
+async def list_drugs():
+    """List all drugs in the reference database."""
+    return {"drugs": medical.list_drugs()}
+
+
+@app.get("/api/v1/medical/drug/{name}", tags=["MEDICAL"])
+async def get_drug(name: str):
+    """Get detailed drug information."""
+    info = medical.get_drug_info(name)
+    if not info:
+        raise HTTPException(status_code=404, detail="Drug not found")
+    return info
 
 
 # ── CYBER-SHIELD ──────────────────────────────────────────────────────────────

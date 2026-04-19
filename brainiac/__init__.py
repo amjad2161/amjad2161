@@ -1,7 +1,8 @@
 """
-BRAINIAC AI — Autonomous Super Intelligence System
-===================================================
-The most advanced autonomous AI platform ever built.
+G.A.N.E — Global Autonomous Navigation Engine
+===============================================
+Enterprise-grade autonomous AI platform with satellite-fused navigation,
+multi-agent intelligence, medical protocols, and RTL-native localization.
 
 Quick start:
     >>> from brainiac import Brainiac, MissionType, Coordinate
@@ -17,10 +18,14 @@ from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
 from brainiac.core.nexus_sync import DeviceType, Protocol
 from brainiac.core.neuro_core import ReasoningDepth
-from brainiac.agent import AgentRouter, TelemetryAnalystAgent, MedicalContentAgent
+from brainiac.core.localization import Localization, Language
+from brainiac.core.medical_protocols import MedicalProtocols
+from brainiac.agent import (
+    AgentRouter, TelemetryAnalystAgent, MedicalContentAgent, NavigationAgent,
+)
 
-__version__ = "1.0.1"
-__codename__ = "GENESIS"
+__version__ = "2.0.0"
+__codename__ = "GANE"
 __author__ = "amjad2161"
 
 __all__ = [
@@ -37,7 +42,11 @@ __all__ = [
     "DeviceType",
     "Protocol",
     "ReasoningDepth",
+    "Localization",
+    "Language",
+    "MedicalProtocols",
     "AgentRouter",
     "TelemetryAnalystAgent",
     "MedicalContentAgent",
+    "NavigationAgent",
 ]

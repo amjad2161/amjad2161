@@ -264,8 +264,66 @@ def test_nav_viewer_served(client):
 
 # ── Security Middleware ───────────────────────────────────────────────────────
 
+# ── Medical Protocol Endpoints ────────────────────────────────────────────────
+
+def test_list_medical_protocols(client):
+    r = client.get("/api/v1/medical/protocols")
+    assert r.status_code == 200
+    assert "acls_cardiac_arrest" in r.json()["protocols"]
+
+
+def test_get_acls_protocol(client):
+    r = client.get("/api/v1/medical/protocol/acls_cardiac_arrest")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["urgency"] == "immediate"
+    assert len(data["steps"]) >= 10
+    assert "disclaimer" in data
+
+
+def test_get_unknown_protocol_404(client):
+    r = client.get("/api/v1/medical/protocol/fake_protocol")
+    assert r.status_code == 404
+
+
+def test_calculate_drug_dose(client):
+    r = client.post("/api/v1/medical/dose?drug=epinephrine&weight_kg=80")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["drug"] == "Epinephrine"
+    assert data["actual_dose_mg"] > 0
+    assert "VERIFY" in data["disclaimer"]
+
+
+def test_triage_critical(client):
+    r = client.post(
+        "/api/v1/medical/triage"
+        "?heart_rate=0&respiratory_rate=0&systolic_bp=0&gcs=3&spo2=0"
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["category"] == "immediate"
+
+
+def test_list_drugs(client):
+    r = client.get("/api/v1/medical/drugs")
+    assert r.status_code == 200
+    assert "epinephrine" in r.json()["drugs"]
+
+
+def test_get_drug_info(client):
+    r = client.get("/api/v1/medical/drug/naloxone")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["drug"] == "Naloxone"
+
+
+# ── Security Middleware ───────────────────────────────────────────────────────
+
 def test_security_headers(client):
     r = client.get("/")
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+    assert r.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+    assert r.headers.get("Permissions-Policy") is not None

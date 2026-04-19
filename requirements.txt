@@ -41,7 +41,7 @@ numpy==1.26.4
 prometheus-client==0.20.0
 structlog==24.1.0
 rich==13.7.1
-psutil==5.9.8
+psutil>=5.9.8
 
 # ── Data / Streaming ──────────────────────────────────────────────────────────
 aiofiles==23.2.1

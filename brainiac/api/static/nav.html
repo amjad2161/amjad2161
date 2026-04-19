@@ -141,7 +141,12 @@
       const el = document.createElement("div");
       el.className = "ins";
       const d = ins.distance_m >= 1000 ? (ins.distance_m/1000).toFixed(1)+" km" : Math.round(ins.distance_m)+" m";
-      el.innerHTML = `<span class="dist">${d}</span> — ${ins.instruction}`;
+      const span = document.createElement("span");
+      span.className = "dist";
+      span.textContent = d;
+      el.appendChild(span);
+      el.appendChild(document.createTextNode(" \u2014 "));
+      el.appendChild(document.createTextNode(ins.instruction));
       list.appendChild(el);
     }
   }
