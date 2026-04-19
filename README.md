@@ -450,6 +450,17 @@ TOTAL                         ✅ 79/79 passing
 
 ---
 
+## `> STABILITY & RELIABILITY`
+
+- **Concurrent load**: API and core-module integration tests exercise parallel routing, telemetry ingest, pub/sub dispatch, and SOS handling without deadlocks.
+- **GNSS accuracy envelope**: `ORBITAL-NAV` reports precision by mode (`STANDARD`, `DGPS`, `RTK`), with RTK path returning centimetre-class simulated accuracy.
+- **INS/drift note**: this repository currently implements GNSS-centric navigation (`ORBITAL-NAV`) and does not yet include a dedicated INS module.
+- **Rate limiting behavior**: `CYBER-SHIELD` enforces per-IP limits with deterministic 429 responses and unblock/recovery coverage in tests.
+- **Emergency drill coverage**: end-to-end tests validate telemetry anomaly detection → SATLINK SOS broadcast → NEXUS device dispatch → signed incident record.
+- **Failure modes & auto-recovery**: routing falls back to offline straight-line estimation when external OSRM is unavailable; middleware now rejects oversized payloads (413) before deeper processing.
+
+---
+
 ## `> ROADMAP`
 
 - [x] **Phase 0** — Architecture & System Design

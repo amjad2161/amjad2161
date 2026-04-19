@@ -38,6 +38,19 @@ from brainiac.api.models import (
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
+_MAX_BODY_BYTES = 10 * 1024 * 1024
+_MAX_SCAN_BYTES = 256 * 1024
+_MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _parse_content_length(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed >= 0 else None
 
 # ── Module singletons ─────────────────────────────────────────────────────────
 neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -82,6 +95,10 @@ app.add_middleware(
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else "0.0.0.0"
+    content_length = _parse_content_length(request.headers.get("content-length"))
+
+    if content_length is not None and content_length > _MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"error": "Payload too large"})
 
     # Rate limiting
     if not shield.check_rate_limit(client_ip):
@@ -91,7 +108,9 @@ async def security_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             body_bytes = await request.body()
-            body_str = body_bytes.decode("utf-8", errors="ignore")
+            if len(body_bytes) > _MAX_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"error": "Payload too large"})
+            body_str = body_bytes[:_MAX_SCAN_BYTES].decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
                 return JSONResponse(status_code=400, content={"error": "Malicious input detected"})
@@ -435,6 +454,8 @@ async def analyze_image(request: Request):
     image_bytes = await request.body()
     if not image_bytes:
         raise HTTPException(status_code=400, detail="Image bytes required in request body")
+    if len(image_bytes) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image payload too large")
     analysis = vision.analyze_scene(image_bytes)
     return {
         "description": analysis.description,
@@ -447,4 +468,6 @@ async def analyze_image(request: Request):
 @app.post("/api/v1/vision/info", tags=["OMNI-VISION"])
 async def image_info(request: Request):
     image_bytes = await request.body()
+    if len(image_bytes) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image payload too large")
     return vision.image_info(image_bytes)

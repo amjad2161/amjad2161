@@ -88,11 +88,26 @@ class SonicMatrix:
         self._tts_cache: dict[str, TTSResult] = {}
         log.info("sonic_matrix.init", default_lang=default_lang)
 
+    @staticmethod
+    def _looks_like_english_nav_instruction(text: str) -> bool:
+        tokens = text.lower().split()
+        if not tokens:
+            return False
+        nav_words = {"turn", "left", "right", "meters", "meter", "km", "straight", "exit"}
+        return all(ord(ch) < 128 for ch in text) and any(word in nav_words for word in tokens)
+
     # ── Language Detection ────────────────────────────────────────────────────
 
     def detect_language(self, text: str) -> dict[str, Any]:
         """Detect language of text using langdetect."""
         try:
+            if self._looks_like_english_nav_instruction(text):
+                return {
+                    "language": "en",
+                    "language_name": LANGUAGE_MAP.get("en", "en"),
+                    "confidence": 0.99,
+                    "all_candidates": [{"lang": "en", "prob": 0.99}],
+                }
             from langdetect import detect, detect_langs
             lang = detect(text)
             probabilities = detect_langs(text)

@@ -202,3 +202,20 @@ def test_security_headers(client):
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("X-Content-Type-Options") == "nosniff"
     assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
+
+
+def test_parse_content_length_robust():
+    with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
+        from brainiac.api.main import _parse_content_length
+
+    assert _parse_content_length(None) is None
+    assert _parse_content_length("abc") is None
+    assert _parse_content_length("-1") is None
+    assert _parse_content_length("0") == 0
+    assert _parse_content_length("1024") == 1024
+
+
+def test_oversized_payload_rejected(client):
+    payload = b"A" * (10 * 1024 * 1024 + 1)
+    r = client.post("/api/v1/vision/analyze", content=payload)
+    assert r.status_code == 413
