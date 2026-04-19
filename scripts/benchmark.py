@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import statistics
+import sys
 import time
+from pathlib import Path
 from typing import Callable, Awaitable
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from brainiac.core import (
     OrbitalNav, SatLink, TelemetryHub, NexusSync,
