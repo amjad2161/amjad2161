@@ -4,10 +4,10 @@ CREATIVE-ENGINE — Generative AI & Multimedia Synthesis
 Text-to-image prompting, content generation, 3D scene descriptions,
 audio composition, and real-time rendering pipeline hooks.
 """
+
 from __future__ import annotations
 
 import base64
-import io
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -74,6 +74,7 @@ class CreativeEngine:
 
     def __init__(self) -> None:
         import uuid
+
         self._uuid = uuid
         self._assets: dict[str, CreativeAsset] = {}
         self._generation_count = 0
@@ -149,10 +150,15 @@ class CreativeEngine:
                 "camera": {"fov": 75, "near": 0.1, "far": 1000, "position": [0, 5, 10]},
                 "lighting": [
                     {"type": "AmbientLight", "color": "#ffffff", "intensity": 0.5},
-                    {"type": "DirectionalLight", "color": "#ffffff", "intensity": 1.0,
-                     "position": [10, 20, 10], "castShadow": True},
+                    {
+                        "type": "DirectionalLight",
+                        "color": "#ffffff",
+                        "intensity": 1.0,
+                        "position": [10, 20, 10],
+                        "castShadow": True,
+                    },
                 ],
-                "objects": [],     # populated by 3D model API response
+                "objects": [],  # populated by 3D model API response
             },
             "generation_note": "Connect Shap-E or Meshy API to populate objects[]",
         }
@@ -185,9 +191,9 @@ class CreativeEngine:
         return (
             f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="20">'
             f'<rect width="{width}" height="20" rx="3" fill="#0d0d0d"/>'
-            f'<text x="{width//2}" y="14" font-family="monospace" font-size="11" '
+            f'<text x="{width // 2}" y="14" font-family="monospace" font-size="11" '
             f'fill="{color}" text-anchor="middle">{text}</text>'
-            f'</svg>'
+            f"</svg>"
         )
 
     # ── Internals ─────────────────────────────────────────────────────────────

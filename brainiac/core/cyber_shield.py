@@ -5,11 +5,11 @@ Threat intelligence, zero-day detection, network hardening,
 post-quantum cryptography, automated incident response.
 NOTE: Defensive/detection use only. No offensive capabilities.
 """
+
 from __future__ import annotations
 
 import hashlib
 import hmac
-import ipaddress
 import json
 import re
 import time
@@ -63,21 +63,21 @@ class NetworkAuditResult:
     services: dict[int, str]
     vulnerabilities: list[str]
     hardening_recommendations: list[str]
-    risk_score: float              # 0 (safe) … 10 (critical)
+    risk_score: float  # 0 (safe) … 10 (critical)
     timestamp: float = field(default_factory=time.time)
 
 
 # Simplified known-bad pattern database (production: MISP / VirusTotal / etc.)
 KNOWN_MALWARE_HASHES: set[str] = {
-    "d41d8cd98f00b204e9800998ecf8427e",    # empty file md5
-    "e3b0c44298fc1c149afbf4c8996fb924",    # empty file sha256
+    "d41d8cd98f00b204e9800998ecf8427e",  # empty file md5
+    "e3b0c44298fc1c149afbf4c8996fb924",  # empty file sha256
 }
 
 INJECTION_PATTERNS = [
     r"(\bSELECT\b.*\bFROM\b|\bUNION\b.*\bSELECT\b|\bDROP\b.*\bTABLE\b)",  # SQL
-    r"(<script[^>]*>|javascript:|on\w+\s*=)",                                # XSS
-    r"(\.\./|%2e%2e%2f|%252e%252e)",                                         # Path traversal
-    r"(\bexec\b|\beval\b|\bsystem\b|\bpassthru\b)\s*\(",                    # Code injection
+    r"(<script[^>]*>|javascript:|on\w+\s*=)",  # XSS
+    r"(\.\./|%2e%2e%2f|%252e%252e)",  # Path traversal
+    r"(\bexec\b|\beval\b|\bsystem\b|\bpassthru\b)\s*\(",  # Code injection
 ]
 
 
@@ -100,7 +100,7 @@ class CyberShield:
     def __init__(self, secret_key: str = "BRAINIAC-DEFAULT-CHANGE-ME") -> None:
         self._secret = secret_key.encode()
         self._events: list[ThreatEvent] = []
-        self._rate_counters: dict[str, list[float]] = {}   # ip → [timestamps]
+        self._rate_counters: dict[str, list[float]] = {}  # ip → [timestamps]
         self._blocked_ips: set[str] = set()
         log.info("cyber_shield.init")
 
@@ -128,6 +128,7 @@ class CyberShield:
     def sanitize(self, text: str) -> str:
         """Return a sanitised version of the input (HTML-escape + strip null bytes)."""
         import html
+
         return html.escape(text.replace("\x00", ""))
 
     # ── Rate Limiting ─────────────────────────────────────────────────────────
@@ -140,21 +141,23 @@ class CyberShield:
     ) -> bool:
         """
         Returns True if the IP is within limits, False if rate-limited.
-        Automatically blocks IPs that exceed 10× the limit.
+        Automatically blocks IPs that exceed 10x the limit.
         """
         if source_ip in self._blocked_ips:
             return False
 
         now = time.time()
         history = self._rate_counters.setdefault(source_ip, [])
-        history[:] = [t for t in history if now - t < window_s]   # prune old
+        history[:] = [t for t in history if now - t < window_s]  # prune old
         history.append(now)
 
         if len(history) > max_requests * 10:
             self._blocked_ips.add(source_ip)
             self._record_threat(
-                ThreatType.BRUTE_FORCE, ThreatLevel.CRITICAL,
-                source_ip, "rate_limiter",
+                ThreatType.BRUTE_FORCE,
+                ThreatLevel.CRITICAL,
+                source_ip,
+                "rate_limiter",
                 f"IP auto-blocked: {len(history)} reqs in {window_s}s",
             )
             log.warning("cyber_shield.ip_blocked", ip=source_ip)
@@ -176,8 +179,10 @@ class CyberShield:
 
         if is_malware:
             self._record_threat(
-                ThreatType.KNOWN_MALWARE_HASH, ThreatLevel.CRITICAL,
-                "0.0.0.0", "file_scanner",
+                ThreatType.KNOWN_MALWARE_HASH,
+                ThreatLevel.CRITICAL,
+                "0.0.0.0",
+                "file_scanner",
                 f"Malware hash match: md5={md5}",
                 {"md5": md5, "sha256": sha256},
             )
@@ -195,8 +200,10 @@ class CyberShield:
         expected = self.sign(payload)
         if not hmac.compare_digest(expected, signature):
             self._record_threat(
-                ThreatType.REPLAY_ATTACK, ThreatLevel.HIGH,
-                "0.0.0.0", "hmac_verifier",
+                ThreatType.REPLAY_ATTACK,
+                ThreatLevel.HIGH,
+                "0.0.0.0",
+                "hmac_verifier",
                 "HMAC signature mismatch — possible replay or tampering",
             )
             return False
@@ -253,6 +260,7 @@ class CyberShield:
         evidence: dict | None = None,
     ) -> ThreatEvent:
         import uuid
+
         event = ThreatEvent(
             event_id=str(uuid.uuid4()),
             threat_type=threat_type,
@@ -274,7 +282,7 @@ class CyberShield:
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
-        by_level = {}
+        by_level: dict[str, int] = {}
         for e in self._events:
             by_level[e.threat_level.name] = by_level.get(e.threat_level.name, 0) + 1
         return {

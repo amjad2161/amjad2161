@@ -1,7 +1,10 @@
 """Tests for NEXUS-SYNC module."""
-import asyncio
+
+from __future__ import annotations
+
 import pytest
-from brainiac.core.nexus_sync import NexusSync, DeviceType, Protocol, Message
+
+from brainiac.core.nexus_sync import DeviceType, Message, NexusSync, Protocol
 
 
 @pytest.fixture
@@ -70,6 +73,22 @@ async def test_wildcard_subscription(nexus):
 
     await nexus.publish("dev-x", "any/topic/here", {"data": 1})
     await nexus.publish("dev-x", "other/topic", {"data": 2})
+    assert len(all_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_wildcard_subscription_async_handler(nexus):
+    nexus.register_device("dev-y", DeviceType.WEARABLE, Protocol.WEBSOCKET, "ws://localhost")
+    await nexus.connect_device("dev-y")
+
+    all_messages: list[Message] = []
+
+    async def handler(msg: Message):
+        all_messages.append(msg)
+
+    nexus.subscribe("#", handler)
+    await nexus.publish("dev-y", "topic/one", {"data": 1})
+    await nexus.publish("dev-y", "topic/two", {"data": 2})
     assert len(all_messages) == 2
 
 

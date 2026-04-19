@@ -1,21 +1,24 @@
 """
-BRAINIAC API — FastAPI Application Entry Point
-===============================================
-All 9 core modules exposed via REST + WebSocket endpoints.
+BRAINIAC API — FastAPI Application Entry Point.
 """
+
 from __future__ import annotations
 
+import asyncio
 import os
+import signal
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
+from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from brainiac.api.models import (
     DetectLanguageRequest,
@@ -45,33 +48,128 @@ from brainiac.core import (
     SonicMatrix,
     TelemetryHub,
 )
-from brainiac.core.neuro_core import ReasoningDepth
+from brainiac.core.neuro_core import CostLimitExceededError, ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
+from brainiac.watchdog import Watchdog
 
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
 _MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
 
-# ── Module singletons ─────────────────────────────────────────────────────────
-neuro   = NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY"))
-nav     = OrbitalNav()
-sonic   = SonicMatrix()
-satlink = SatLink()
-nexus   = NexusSync()
-telem   = TelemetryHub()
-shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"))
-creative= CreativeEngine()
-vision  = OmniVision()
+
+def _build_modules() -> dict[str, Any]:
+    return {
+        "neuro": NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY")),
+        "nav": OrbitalNav(),
+        "sonic": SonicMatrix(),
+        "satlink": SatLink(),
+        "nexus": NexusSync(),
+        "telem": TelemetryHub(),
+        "shield": CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION")),
+        "creative": CreativeEngine(),
+        "vision": OmniVision(),
+    }
+
+
+def _module_factories() -> dict[str, Any]:
+    return {
+        "neuro": lambda: NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY")),
+        "nav": OrbitalNav,
+        "sonic": SonicMatrix,
+        "satlink": SatLink,
+        "nexus": NexusSync,
+        "telem": TelemetryHub,
+        "shield": lambda: CyberShield(
+            secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION"),
+        ),
+        "creative": CreativeEngine,
+        "vision": OmniVision,
+    }
+
+
+def _module_health() -> dict[str, str]:
+    return {
+        "neuro_core": "ONLINE",
+        "orbital_nav": "ONLINE",
+        "satlink": "ONLINE",
+        "sonic_matrix": "ONLINE",
+        "nexus_sync": "ONLINE",
+        "telemetry_hub": "ONLINE",
+        "cyber_shield": "ONLINE",
+        "creative_engine": "ONLINE",
+        "omni_vision": "ONLINE",
+    }
+
+
+def _watchdog_health_map() -> dict[str, str]:
+    return {
+        "neuro": "neuro_core",
+        "nav": "orbital_nav",
+        "satlink": "satlink",
+        "sonic": "sonic_matrix",
+        "nexus": "nexus_sync",
+        "telem": "telemetry_hub",
+        "shield": "cyber_shield",
+        "creative": "creative_engine",
+        "vision": "omni_vision",
+    }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.modules = _build_modules()
+    app.state.module_health = _module_health()
+    app.state.active_stream_tasks = set()
+    app.state.shutdown_event = asyncio.Event()
+    app.state.admin_header = os.getenv("BRAINIAC_ADMIN_HEADER", "X-BRAINIAC-Admin")
+    app.state.admin_token = os.getenv("BRAINIAC_ADMIN_TOKEN", "brainiac-admin")
+    app.state.watchdog = Watchdog(
+        modules=app.state.modules,
+        factories=_module_factories(),
+        module_health=app.state.module_health,
+        health_key_map=_watchdog_health_map(),
+    )
+
+    loop = asyncio.get_running_loop()
+    registered_signals: list[signal.Signals] = []
+
+    def _signal_handler(sig_num: int) -> None:
+        log.warning("brainiac.signal", signal=sig_num)
+        app.state.shutdown_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_handler, sig)
+            registered_signals.append(sig)
+        except (NotImplementedError, RuntimeError, ValueError):
+            pass
+
     log.info("brainiac.startup")
+    satlink: SatLink = app.state.modules["satlink"]
     await satlink.connect()
-    yield
-    log.info("brainiac.shutdown")
+    await app.state.watchdog.start()
+
+    try:
+        yield
+    finally:
+        log.info("brainiac.shutdown")
+        app.state.shutdown_event.set()
+
+        tasks = list(app.state.active_stream_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        await app.state.watchdog.stop()
+
+        neuro: NeuroCore = app.state.modules["neuro"]
+        await neuro.close()
+
+        for sig in registered_signals:
+            loop.remove_signal_handler(sig)
 
 
 app = FastAPI(
@@ -93,7 +191,6 @@ app.add_middleware(
 
 
 def _validate_request_size(content_length: str | None, body_len: int | None = None) -> None:
-    """Validate request body size against the hard 10MB limit."""
     if content_length:
         try:
             if int(content_length) > _MAX_REQUEST_BODY_BYTES:
@@ -104,14 +201,41 @@ def _validate_request_size(content_length: str | None, body_len: int | None = No
         raise HTTPException(status_code=413, detail="Request body too large")
 
 
-# ── Security middleware ───────────────────────────────────────────────────────
+def _modules() -> dict[str, Any]:
+    return app.state.modules
+
+
+def _shield() -> CyberShield:
+    return _modules()["shield"]
+
+
+def _is_admin(request: Request) -> bool:
+    header_name: str = app.state.admin_header
+    return request.headers.get(header_name) == app.state.admin_token
+
+
+async def _track_stream_task_start() -> asyncio.Task[Any] | None:
+    task = asyncio.current_task()
+    if task is not None:
+        app.state.active_stream_tasks.add(task)
+    return task
+
+
+def _track_stream_task_end(task: asyncio.Task[Any] | None) -> None:
+    if task is not None:
+        app.state.active_stream_tasks.discard(task)
+
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
     client_ip = request.client.host if request.client else "0.0.0.0"
+    shield = _shield()
 
-    # Rate limiting
+    clear_contextvars()
+    bind_contextvars(request_id=request_id)
+    log.info("http.request", method=request.method, path=request.url.path)
+
     if not shield.check_rate_limit(client_ip):
         return JSONResponse(
             status_code=429,
@@ -119,7 +243,6 @@ async def security_middleware(request: Request, call_next):
             headers={"X-Request-Id": request_id},
         )
 
-    # Scan body for injection on write methods
     if request.method in ("POST", "PUT", "PATCH"):
         try:
             _validate_request_size(request.headers.get("content-length"))
@@ -127,12 +250,17 @@ async def security_middleware(request: Request, call_next):
             _validate_request_size(None, len(body_bytes))
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
-            if threat and threat.threat_level.value >= 3:   # HIGH or CRITICAL
+            if threat and threat.threat_level.value >= 3:
                 return JSONResponse(
                     status_code=400,
                     content={"error": "Malicious input detected"},
                     headers={"X-Request-Id": request_id},
                 )
+
+            async def receive() -> dict[str, Any]:
+                return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+            request = Request(request.scope, receive)
         except HTTPException as exc:
             return JSONResponse(
                 status_code=exc.status_code,
@@ -147,10 +275,11 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    log.info(
+        "http.response", method=request.method, path=request.url.path, status=response.status_code
+    )
     return response
 
-
-# ── Health / Status ───────────────────────────────────────────────────────────
 
 @app.get("/", tags=["System"])
 async def root():
@@ -162,45 +291,53 @@ async def health():
     return HealthResponse(
         status="ONLINE",
         version="1.0.0",
-        modules={
-            "neuro_core":      "ONLINE",
-            "orbital_nav":     "ONLINE",
-            "satlink":         "ONLINE",
-            "sonic_matrix":    "ONLINE",
-            "nexus_sync":      "ONLINE",
-            "telemetry_hub":   "ONLINE",
-            "cyber_shield":    "ONLINE",
-            "creative_engine": "ONLINE",
-            "omni_vision":     "ONLINE",
-        },
+        modules=dict(app.state.module_health),
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
 
 
 @app.get("/diagnostics", tags=["System"])
 async def diagnostics():
+    modules = _modules()
     return {
-        "neuro_core":      neuro.diagnostics(),
-        "orbital_nav":     nav.diagnostics(),
-        "satlink":         satlink.diagnostics(),
-        "sonic_matrix":    sonic.diagnostics(),
-        "nexus_sync":      nexus.diagnostics(),
-        "telemetry_hub":   telem.diagnostics(),
-        "cyber_shield":    shield.diagnostics(),
-        "creative_engine": creative.diagnostics(),
-        "omni_vision":     vision.diagnostics(),
+        "neuro_core": modules["neuro"].diagnostics(),
+        "orbital_nav": modules["nav"].diagnostics(),
+        "satlink": modules["satlink"].diagnostics(),
+        "sonic_matrix": modules["sonic"].diagnostics(),
+        "nexus_sync": modules["nexus"].diagnostics(),
+        "telemetry_hub": modules["telem"].diagnostics(),
+        "cyber_shield": modules["shield"].diagnostics(),
+        "creative_engine": modules["creative"].diagnostics(),
+        "omni_vision": modules["vision"].diagnostics(),
     }
 
 
 @app.get("/metrics", tags=["System"], response_class=Response)
 async def prometheus_metrics():
-    return Response(content=telem.prometheus_metrics(), media_type="text/plain")
+    return Response(content=_modules()["telem"].prometheus_metrics(), media_type="text/plain")
 
 
-# ── NEURO-CORE ────────────────────────────────────────────────────────────────
+@app.get("/api/v1/system/cost-stats", tags=["System"])
+async def cost_stats():
+    return _modules()["neuro"].cost_stats()
+
+
+@app.get("/api/v1/system/watchdog", tags=["System"])
+async def watchdog_status():
+    return app.state.watchdog.diagnostics()
+
+
+@app.post("/api/v1/system/shutdown-test", tags=["System"])
+async def shutdown_test(request: Request):
+    if not _is_admin(request):
+        raise HTTPException(status_code=403, detail="Admin header required")
+    app.state.shutdown_event.set()
+    return {"marker": "shutdown_test_triggered", "request_id": request.headers.get("X-Request-Id")}
+
 
 @app.post("/api/v1/think", response_model=ThinkResponse, tags=["NEURO-CORE"])
 async def think(req: ThinkRequest):
+    neuro: NeuroCore = _modules()["neuro"]
     try:
         depth = ReasoningDepth(req.depth)
         thought = await neuro.think(req.prompt, depth=depth, use_cache=req.use_cache)
@@ -212,22 +349,32 @@ async def think(req: ThinkRequest):
             latency_ms=thought.latency_ms,
             cached=thought.cached,
         )
+    except CostLimitExceededError as exc:
+        return JSONResponse(
+            status_code=429, content={"error": "cost_limit_exceeded", "stats": exc.stats}
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/think/stream", tags=["NEURO-CORE"])
 async def think_stream(req: ThinkRequest):
-    """Stream tokens as Server-Sent Events."""
-    async def generator():
-        async for token in neuro.think_stream(req.prompt):
-            yield {"data": token}
+    neuro: NeuroCore = _modules()["neuro"]
+
+    async def generator() -> AsyncIterator[dict[str, str]]:
+        task = await _track_stream_task_start()
+        try:
+            async for token in neuro.think_stream(req.prompt):
+                yield {"data": token}
+        finally:
+            _track_stream_task_end(task)
+
     return EventSourceResponse(generator())
 
 
 @app.post("/api/v1/think/improve", response_model=ThinkResponse, tags=["NEURO-CORE"])
 async def think_improve(req: ThinkRequest):
-    """Two-pass: generate then self-improve."""
+    neuro: NeuroCore = _modules()["neuro"]
     try:
         first = await neuro.think(req.prompt)
         improved = await neuro.self_improve(first)
@@ -239,15 +386,21 @@ async def think_improve(req: ThinkRequest):
             latency_ms=improved.latency_ms,
             cached=improved.cached,
         )
+    except CostLimitExceededError as exc:
+        return JSONResponse(
+            status_code=429, content={"error": "cost_limit_exceeded", "stats": exc.stats}
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-# ── WebSocket streaming chat ──────────────────────────────────────────────────
-
 @app.websocket("/ws/chat")
 async def websocket_chat(ws: WebSocket):
+    neuro: NeuroCore = _modules()["neuro"]
     await ws.accept()
+    task = asyncio.current_task()
+    if task is not None:
+        app.state.active_stream_tasks.add(task)
     log.info("ws.chat.connected", client=ws.client)
     try:
         while True:
@@ -257,17 +410,19 @@ async def websocket_chat(ws: WebSocket):
             await ws.send_text("[END]")
     except WebSocketDisconnect:
         log.info("ws.chat.disconnected")
+    finally:
+        if task is not None:
+            app.state.active_stream_tasks.discard(task)
 
-
-# ── ORBITAL-NAV ───────────────────────────────────────────────────────────────
 
 @app.post("/api/v1/nav/route", response_model=RouteResponse, tags=["ORBITAL-NAV"])
 async def route(req: RouteRequest):
+    nav: OrbitalNav = _modules()["nav"]
     origin = Coordinate(lat=req.origin_lat, lon=req.origin_lon)
-    dest   = Coordinate(lat=req.dest_lat,   lon=req.dest_lon)
-    mode   = TransportMode(req.mode)
-    route  = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
-    s = route.summary()
+    dest = Coordinate(lat=req.dest_lat, lon=req.dest_lon)
+    mode = TransportMode(req.mode)
+    nav_route = await nav.route(origin, dest, mode=mode, alternatives=req.alternatives)
+    s = nav_route.summary()
     return RouteResponse(
         origin=s["origin"],
         destination=s["destination"],
@@ -284,22 +439,32 @@ async def route(req: RouteRequest):
 
 @app.get("/api/v1/nav/position", tags=["ORBITAL-NAV"])
 async def get_position():
+    nav: OrbitalNav = _modules()["nav"]
     pos = await nav.get_position()
     sats = await nav.get_satellite_status()
     return {
-        "lat": pos.lat, "lon": pos.lon, "alt_m": pos.alt_m,
-        "accuracy_m": pos.accuracy_m, "timestamp": pos.timestamp,
+        "lat": pos.lat,
+        "lon": pos.lon,
+        "alt_m": pos.alt_m,
+        "accuracy_m": pos.accuracy_m,
+        "timestamp": pos.timestamp,
         "satellites": [{"system": s.system, "fix": s.fix_type, "hdop": s.hdop} for s in sats],
     }
 
 
-# ── SATLINK SOS ───────────────────────────────────────────────────────────────
+@app.get("/api/v1/nav/cache-stats", tags=["ORBITAL-NAV"])
+async def nav_cache_stats():
+    nav: OrbitalNav = _modules()["nav"]
+    return nav.get_cache_stats()
+
 
 @app.post("/api/v1/sos", response_model=SOSResponse, tags=["SATLINK-X"])
 async def send_sos(req: SOSRequest):
+    satlink: SatLink = _modules()["satlink"]
     priority = SOSPriority[req.priority]
     packet = await satlink.send_sos(
-        lat=req.lat, lon=req.lon,
+        lat=req.lat,
+        lon=req.lon,
         message=req.message,
         priority=priority,
         alt_m=req.alt_m,
@@ -316,6 +481,7 @@ async def send_sos(req: SOSRequest):
 
 @app.get("/api/v1/sos/passes", tags=["SATLINK-X"])
 async def satellite_passes(lat: float = 32.0, lon: float = 34.8, hours: int = 24):
+    satlink: SatLink = _modules()["satlink"]
     passes = await satlink.predict_passes(lat, lon, hours)
     return [
         {
@@ -330,15 +496,14 @@ async def satellite_passes(lat: float = 32.0, lon: float = 34.8, hours: int = 24
     ]
 
 
-# ── SONIC-MATRIX ──────────────────────────────────────────────────────────────
-
 @app.post("/api/v1/sonic/detect", tags=["SONIC-MATRIX"])
 async def detect_language(req: DetectLanguageRequest):
-    return sonic.detect_language(req.text)
+    return _modules()["sonic"].detect_language(req.text)
 
 
 @app.post("/api/v1/sonic/translate", tags=["SONIC-MATRIX"])
 async def translate(req: TranslateRequest):
+    sonic: SonicMatrix = _modules()["sonic"]
     result = sonic.translate(req.text, req.target_lang, req.source_lang)
     return {
         "source_text": result.source_text,
@@ -351,6 +516,7 @@ async def translate(req: TranslateRequest):
 
 @app.post("/api/v1/sonic/tts", tags=["SONIC-MATRIX"])
 async def tts(req: TTSRequest):
+    sonic: SonicMatrix = _modules()["sonic"]
     result = sonic.synthesize(req.text, lang=req.lang)
     if not result.audio_bytes:
         raise HTTPException(status_code=500, detail="TTS synthesis failed")
@@ -363,13 +529,16 @@ async def tts(req: TTSRequest):
 
 @app.get("/api/v1/sonic/languages", tags=["SONIC-MATRIX"])
 async def supported_languages():
-    return {"languages": sonic.supported_languages()}
+    return {"languages": _modules()["sonic"].supported_languages()}
 
 
-# ── TELEMETRY-HUB ─────────────────────────────────────────────────────────────
-
-@app.post("/api/v1/telemetry/ingest", response_model=TelemetryIngestResponse, tags=["TELEMETRY-HUB"])
+@app.post(
+    "/api/v1/telemetry/ingest",
+    response_model=TelemetryIngestResponse,
+    tags=["TELEMETRY-HUB"],
+)
 async def ingest_telemetry(req: SensorReadingRequest):
+    telem: TelemetryHub = _modules()["telem"]
     reading = SensorReading(
         sensor_id=req.sensor_id, value=req.value, unit=req.unit, quality=req.quality
     )
@@ -384,43 +553,51 @@ async def ingest_telemetry(req: SensorReadingRequest):
 
 @app.get("/api/v1/telemetry/stream/{sensor_id}", tags=["TELEMETRY-HUB"])
 async def stream_sensor(sensor_id: str, interval: float = 1.0):
-    """Server-Sent Events stream of live sensor readings."""
-    async def generator():
-        async for reading in telem.stream_sensor(sensor_id, interval_s=interval):
-            yield {"data": str(reading)}
+    telem: TelemetryHub = _modules()["telem"]
+
+    async def generator() -> AsyncIterator[dict[str, str]]:
+        task = await _track_stream_task_start()
+        try:
+            async for reading in telem.stream_sensor(sensor_id, interval_s=interval):
+                yield {"data": str(reading)}
+        finally:
+            _track_stream_task_end(task)
+
     return EventSourceResponse(generator())
 
 
 @app.get("/api/v1/telemetry/summary", tags=["TELEMETRY-HUB"])
 async def telemetry_summary():
-    return {"streams": telem.stream_summary()}
+    return {"streams": _modules()["telem"].stream_summary()}
 
-
-# ── CREATIVE-ENGINE ───────────────────────────────────────────────────────────
 
 @app.post("/api/v1/creative/image-prompt", tags=["CREATIVE-ENGINE"])
 async def image_prompt(req: ImagePromptRequest):
     from brainiac.core.creative_engine import Style
+
+    creative: CreativeEngine = _modules()["creative"]
     style = Style(req.style)
     return creative.generate_image_prompt(req.subject, style, req.width, req.height)
 
 
 @app.get("/api/v1/creative/badge", tags=["CREATIVE-ENGINE"])
 async def generate_badge(text: str, color: str = "#00f5ff"):
+    creative: CreativeEngine = _modules()["creative"]
     svg = creative.generate_svg_badge(text, color)
     return Response(content=svg, media_type="image/svg+xml")
 
 
 @app.post("/api/v1/creative/3d-scene", tags=["CREATIVE-ENGINE"])
 async def generate_3d(description: str):
+    creative: CreativeEngine = _modules()["creative"]
     return creative.generate_3d_scene(description)
 
-
-# ── NEXUS-SYNC ────────────────────────────────────────────────────────────────
 
 @app.post("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
 async def register_device(req: RegisterDeviceRequest):
     from brainiac.core.nexus_sync import DeviceType, Protocol
+
+    nexus: NexusSync = _modules()["nexus"]
     try:
         device = nexus.register_device(
             device_id=req.device_id,
@@ -438,19 +615,20 @@ async def register_device(req: RegisterDeviceRequest):
 
 @app.get("/api/v1/nexus/devices", tags=["NEXUS-SYNC"])
 async def list_devices(connected_only: bool = False):
+    nexus: NexusSync = _modules()["nexus"]
     return [d.to_dict() for d in nexus.list_devices(connected_only=connected_only)]
 
 
 @app.post("/api/v1/nexus/publish", tags=["NEXUS-SYNC"])
 async def publish_message(req: PublishRequest):
+    nexus: NexusSync = _modules()["nexus"]
     msg = await nexus.publish(req.device_id, req.topic, req.payload, req.qos)
     return {"msg_id": msg.msg_id, "topic": msg.topic, "timestamp": msg.timestamp}
 
 
-# ── CYBER-SHIELD ──────────────────────────────────────────────────────────────
-
 @app.post("/api/v1/security/scan-input", tags=["CYBER-SHIELD"])
 async def scan_input(text: str, source_ip: str = "0.0.0.0"):
+    shield = _shield()
     threat = shield.scan_input(text, source_ip)
     return {
         "clean": threat is None,
@@ -458,12 +636,15 @@ async def scan_input(text: str, source_ip: str = "0.0.0.0"):
             "type": threat.threat_type.value,
             "level": threat.threat_level.name,
             "description": threat.description,
-        } if threat else None,
+        }
+        if threat
+        else None,
     }
 
 
 @app.post("/api/v1/security/audit-config", tags=["CYBER-SHIELD"])
 async def audit_config(config: dict):
+    shield = _shield()
     result = shield.audit_config(config)
     return {
         "risk_score": result.risk_score,
@@ -472,11 +653,9 @@ async def audit_config(config: dict):
     }
 
 
-# ── OMNI-VISION ───────────────────────────────────────────────────────────────
-
 @app.post("/api/v1/vision/analyze", tags=["OMNI-VISION"])
 async def analyze_image(request: Request):
-    """Accepts raw image bytes in request body."""
+    vision: OmniVision = _modules()["vision"]
     _validate_request_size(request.headers.get("content-length"))
     image_bytes = await request.body()
     if not image_bytes:
@@ -493,6 +672,7 @@ async def analyze_image(request: Request):
 
 @app.post("/api/v1/vision/info", tags=["OMNI-VISION"])
 async def image_info(request: Request):
+    vision: OmniVision = _modules()["vision"]
     _validate_request_size(request.headers.get("content-length"))
     image_bytes = await request.body()
     _validate_request_size(None, len(image_bytes))
