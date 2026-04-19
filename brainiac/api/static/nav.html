@@ -303,6 +303,57 @@
     letter-spacing: 0.05em; text-transform: uppercase;
   }
 
+  /* Hazard badge */
+  .hazard-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px; border-radius: var(--radius-sm);
+    font-size: 11px; font-weight: 500; font-family: var(--font-mono);
+    background: var(--bg-1); border: 1px solid var(--border);
+    cursor: default;
+  }
+  .hazard-chip .sev {
+    width: 6px; height: 6px; border-radius: 50%;
+  }
+  .sev-high { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+  .sev-med  { background: var(--warn); }
+  .sev-low  { background: var(--success); }
+
+  .poi-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); font-size: 12px;
+    transition: border-color 0.15s var(--ease);
+  }
+  .poi-item:hover { border-color: var(--border-hover); }
+  .poi-name { color: var(--text-0); font-weight: 500; }
+  .poi-dist { color: var(--text-2); font-family: var(--font-mono); font-size: 11px; }
+  .poi-cat { color: var(--text-2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  .tab-bar {
+    display: flex; gap: 4px; margin-bottom: 10px;
+  }
+  .tab-btn {
+    flex: 1; padding: 7px 10px;
+    background: var(--bg-1); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); color: var(--text-2);
+    font-size: 11px; font-weight: 500; font-family: var(--font-sans);
+    cursor: pointer; text-align: center;
+    transition: all 0.15s var(--ease);
+  }
+  .tab-btn:hover { border-color: var(--border-hover); color: var(--text-1); }
+  .tab-btn.active {
+    background: var(--bg-3); color: var(--text-0);
+    border-color: var(--border-hover);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  #hazard-list, #poi-list {
+    display: flex; flex-direction: column; gap: 6px;
+    max-height: 200px; overflow-y: auto;
+  }
+
   /* Responsive */
   @media (max-width: 840px) {
     #layout { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
@@ -377,12 +428,51 @@
     </div>
 
     <div class="card">
+      <div class="card-title">Community Intel</div>
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="hazards">Hazards</button>
+        <button class="tab-btn" data-tab="pois">POIs</button>
+      </div>
+      <div id="tab-hazards" class="tab-panel active">
+        <div class="row" style="margin-bottom:8px">
+          <select id="hazard-type">
+            <option value="accident">Accident</option>
+            <option value="pothole">Pothole</option>
+            <option value="police">Police</option>
+            <option value="construction">Construction</option>
+            <option value="flood">Flood</option>
+            <option value="road_closure">Road closure</option>
+            <option value="object_on_road">Object on road</option>
+            <option value="speed_camera">Speed camera</option>
+          </select>
+          <button class="btn btn-secondary" id="btn-report-hazard" style="padding:8px">Report</button>
+        </div>
+        <div id="hazard-list"></div>
+      </div>
+      <div id="tab-pois" class="tab-panel">
+        <div class="row" style="margin-bottom:8px">
+          <select id="poi-category">
+            <option value="">All categories</option>
+            <option value="hospital">Hospital</option>
+            <option value="gas_station">Gas station</option>
+            <option value="restaurant">Restaurant</option>
+            <option value="pharmacy">Pharmacy</option>
+            <option value="parking">Parking</option>
+            <option value="police_station">Police</option>
+          </select>
+          <button class="btn btn-secondary" id="btn-search-poi" style="padding:8px">Search</button>
+        </div>
+        <div id="poi-list"></div>
+      </div>
+    </div>
+
+    <div class="card">
       <div class="card-title">Turn-by-turn</div>
       <div id="instructions"><div class="ins"><span class="text" style="color:var(--text-2)">Compute a route to view directions</span></div></div>
     </div>
 
     <div class="footer">
-      <span>v2.1.0 · GANE</span>
+      <span>v3.0.0 · GANE</span>
       <span>12 Modules · 6 GNSS</span>
     </div>
   </aside>
@@ -500,8 +590,105 @@
     ws.onerror = () => { $("s-live").textContent = "error"; };
   }
 
+  // ── Tab switching ──────────────────────────────────────────────────────
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      btn.classList.add("active");
+      $("tab-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  // ── Hazard layers ──────────────────────────────────────────────────────
+  let hazardMarkers = [];
+
+  async function reportHazard() {
+    const center = map.getCenter();
+    const type = $("hazard-type").value;
+    const r = await fetch("/api/v1/nav/hazards", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({lat: center.lat, lon: center.lng, type: type, severity: 7}),
+    });
+    if (r.ok) loadHazards();
+  }
+
+  async function loadHazards() {
+    const center = map.getCenter();
+    const r = await fetch(`/api/v1/nav/hazards?lat=${center.lat}&lon=${center.lng}&radius_m=50000`);
+    if (!r.ok) return;
+    const data = await r.json();
+    hazardMarkers.forEach(m => map.removeLayer(m));
+    hazardMarkers = [];
+    const list = $("hazard-list");
+    list.innerHTML = "";
+    for (const h of data.hazards) {
+      const sev = h.severity >= 7 ? "sev-high" : h.severity >= 4 ? "sev-med" : "sev-low";
+      const chip = document.createElement("div");
+      chip.className = "hazard-chip";
+      chip.innerHTML = '<span class="sev ' + sev + '"></span>';
+      const label = document.createElement("span");
+      label.textContent = h.type.replace(/_/g, " ") + " · " + h.upvotes + " confirms";
+      chip.appendChild(label);
+      list.appendChild(chip);
+      const marker = L.circleMarker([h.lat, h.lon], {
+        radius: 8, color: h.severity >= 7 ? "#f87171" : "#fbbf24",
+        fillColor: h.severity >= 7 ? "#f87171" : "#fbbf24",
+        fillOpacity: 0.7, weight: 2,
+      }).addTo(map);
+      marker.bindPopup(h.type.replace(/_/g, " ") + " (sev: " + h.severity + ")");
+      hazardMarkers.push(marker);
+    }
+  }
+
+  // ── POI layers ──────────────────────────────────────────────────────────
+  let poiMarkers = [];
+
+  async function searchPOIs() {
+    const center = map.getCenter();
+    const cat = $("poi-category").value;
+    let url = `/api/v1/nav/pois?lat=${center.lat}&lon=${center.lng}&radius_m=50000&limit=20`;
+    if (cat) url += "&category=" + cat;
+    const r = await fetch(url);
+    if (!r.ok) return;
+    const data = await r.json();
+    poiMarkers.forEach(m => map.removeLayer(m));
+    poiMarkers = [];
+    const list = $("poi-list");
+    list.innerHTML = "";
+    for (const p of data.pois) {
+      const item = document.createElement("div");
+      item.className = "poi-item";
+      const left = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "poi-name";
+      name.textContent = p.name;
+      const cat = document.createElement("div");
+      cat.className = "poi-cat";
+      cat.textContent = p.category.replace(/_/g, " ");
+      left.appendChild(name);
+      left.appendChild(cat);
+      item.appendChild(left);
+      if (p.distance_m) {
+        const dist = document.createElement("span");
+        dist.className = "poi-dist";
+        dist.textContent = p.distance_m >= 1000
+          ? (p.distance_m / 1000).toFixed(1) + " km"
+          : Math.round(p.distance_m) + " m";
+        item.appendChild(dist);
+      }
+      list.appendChild(item);
+      const marker = L.marker([p.lat, p.lon]).addTo(map);
+      marker.bindPopup(p.name + " (" + p.category.replace(/_/g, " ") + ")");
+      poiMarkers.push(marker);
+    }
+  }
+
   $("btn-route").addEventListener("click", computeRoute);
   $("btn-ws").addEventListener("click", toggleLive);
+  $("btn-report-hazard").addEventListener("click", reportHazard);
+  $("btn-search-poi").addEventListener("click", searchPOIs);
   $("lang").addEventListener("change", (e) => setRTL(e.target.value));
 })();
 </script>

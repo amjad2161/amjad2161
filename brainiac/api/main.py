@@ -930,6 +930,104 @@ async def v2x_traffic_light(request: Request):
     )
 
 
+# ── COMMUNITY HAZARDS (Waze DNA) ────────────────────────────────────────────
+
+@app.post("/api/v1/nav/hazards", tags=["ORBITAL-NAV"])
+async def report_hazard(request: Request):
+    """Report a road hazard (pothole, accident, police, construction, etc.)."""
+    body = await request.json()
+    return nav.report_hazard(
+        lat=body["lat"], lon=body["lon"],
+        hazard_type=body["type"],
+        description=body.get("description", ""),
+        reporter_id=body.get("reporter_id", "anonymous"),
+        severity=body.get("severity", 5),
+    )
+
+
+@app.get("/api/v1/nav/hazards", tags=["ORBITAL-NAV"])
+async def get_hazards(
+    lat: float | None = None, lon: float | None = None,
+    radius_m: float = 5000.0, active_only: bool = True,
+):
+    """List active hazards, optionally filtered by location."""
+    return {"hazards": nav.get_hazards(lat, lon, radius_m, active_only)}
+
+
+@app.post("/api/v1/nav/hazards/{hazard_id}/upvote", tags=["ORBITAL-NAV"])
+async def upvote_hazard(hazard_id: str):
+    """Confirm a hazard still exists."""
+    result = nav.upvote_hazard(hazard_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Hazard not found")
+    return result
+
+
+@app.delete("/api/v1/nav/hazards/{hazard_id}", tags=["ORBITAL-NAV"])
+async def dismiss_hazard(hazard_id: str):
+    """Mark a hazard as no longer active."""
+    if not nav.dismiss_hazard(hazard_id):
+        raise HTTPException(status_code=404, detail="Hazard not found")
+    return {"dismissed": True}
+
+
+# ── POI DATABASE (Google Maps DNA) ──────────────────────────────────────────
+
+@app.post("/api/v1/nav/pois", tags=["ORBITAL-NAV"])
+async def add_poi(request: Request):
+    """Add a Point of Interest."""
+    body = await request.json()
+    return nav.add_poi(
+        lat=body["lat"], lon=body["lon"],
+        name=body["name"], category=body["category"],
+        subcategory=body.get("subcategory", ""),
+        rating=body.get("rating", 0.0),
+        metadata=body.get("metadata"),
+    )
+
+
+@app.get("/api/v1/nav/pois", tags=["ORBITAL-NAV"])
+async def search_pois(
+    query: str = "", category: str | None = None,
+    lat: float | None = None, lon: float | None = None,
+    radius_m: float = 5000.0, limit: int = 20,
+):
+    """Search POIs by name, category, and/or proximity."""
+    return {"pois": nav.search_pois(query, category, lat, lon, radius_m, limit)}
+
+
+@app.get("/api/v1/nav/pois/nearest", tags=["ORBITAL-NAV"])
+async def nearest_poi(lat: float, lon: float, category: str):
+    """Find the nearest POI of a given category."""
+    result = nav.nearest_poi(lat, lon, category)
+    if not result:
+        raise HTTPException(status_code=404, detail=f"No POI found for category: {category}")
+    return result
+
+
+@app.get("/api/v1/nav/pois/categories", tags=["ORBITAL-NAV"])
+async def poi_categories():
+    """List all POI categories."""
+    return {"categories": nav.poi_categories()}
+
+
+# ── PREDICTIVE ROUTING (Edge-AI Intent Engine) ──────────────────────────────
+
+@app.post("/api/v1/nav/predict-intent", tags=["ORBITAL-NAV"])
+async def predict_route_intent(request: Request):
+    """Predict driver destination based on current state and history."""
+    body = await request.json()
+    return nav.predict_route_intent(
+        current_lat=body["current_lat"],
+        current_lon=body["current_lon"],
+        heading_deg=body.get("heading_deg", 0.0),
+        speed_ms=body.get("speed_ms", 0.0),
+        time_of_day=body.get("time_of_day", 12),
+        weekday=body.get("weekday", 0),
+        history=body.get("history"),
+    )
+
+
 # ── LIFE CORRIDORS ──────────────────────────────────────────────────────────
 
 @app.post("/api/v1/nav/life-corridor", tags=["ORBITAL-NAV"])

@@ -194,6 +194,8 @@ class OrbitalNav:
         self._sbas: list[SBASStatus] = list(_SBAS_CATALOG)
         self._route: Route | None = None
         self._tracking = False
+        self._hazards: list[dict[str, Any]] = []
+        self._pois: list[dict[str, Any]] = []
         log.info(
             "orbital_nav.init",
             precision=precision.value,
@@ -813,6 +815,262 @@ class OrbitalNav:
             "geometry": [{"lat": c.lat, "lon": c.lon} for c in route.geometry[:50]],
         }
 
+    # ── Community Hazard Reporting (Waze DNA) ──────────────────────────────
+
+    def report_hazard(
+        self,
+        lat: float,
+        lon: float,
+        hazard_type: str,
+        description: str = "",
+        reporter_id: str = "anonymous",
+        severity: int = 5,
+    ) -> dict[str, Any]:
+        """
+        Submit a community-reported hazard.
+
+        hazard_type: pothole | accident | police | construction | flood |
+                     road_closure | object_on_road | weather | speed_camera | other
+        severity: 1 (minor) to 10 (critical)
+        """
+        import uuid
+        hazard_id = str(uuid.uuid4())[:12]
+        entry = {
+            "hazard_id": hazard_id,
+            "lat": lat,
+            "lon": lon,
+            "type": hazard_type,
+            "description": description,
+            "severity": min(10, max(1, severity)),
+            "reporter_id": reporter_id,
+            "timestamp": time.time(),
+            "upvotes": 0,
+            "active": True,
+        }
+        self._hazards.append(entry)
+        log.info("orbital_nav.hazard_reported", hazard_id=hazard_id, type=hazard_type)
+        return entry
+
+    def get_hazards(
+        self,
+        lat: float | None = None,
+        lon: float | None = None,
+        radius_m: float = 5000.0,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return hazards, optionally filtered by proximity and active status."""
+        now = time.time()
+        max_age = 3600 * 4  # 4 hours
+        results = []
+        for h in self._hazards:
+            if active_only and not h["active"]:
+                continue
+            if now - h["timestamp"] > max_age:
+                continue
+            if lat is not None and lon is not None:
+                d = Coordinate(lat=lat, lon=lon).distance_to(
+                    Coordinate(lat=h["lat"], lon=h["lon"])
+                )
+                if d > radius_m:
+                    continue
+            results.append(h)
+        return results
+
+    def upvote_hazard(self, hazard_id: str) -> dict[str, Any] | None:
+        """Upvote a hazard to confirm it still exists."""
+        for h in self._hazards:
+            if h["hazard_id"] == hazard_id:
+                h["upvotes"] += 1
+                return h
+        return None
+
+    def dismiss_hazard(self, hazard_id: str) -> bool:
+        """Mark a hazard as no longer active."""
+        for h in self._hazards:
+            if h["hazard_id"] == hazard_id:
+                h["active"] = False
+                return True
+        return False
+
+    def hazards_on_route(self, route: Route, buffer_m: float = 200.0) -> list[dict[str, Any]]:
+        """Find active hazards along a route's geometry within buffer distance."""
+        active = [h for h in self._hazards if h["active"]]
+        on_route = []
+        for h in active:
+            hc = Coordinate(lat=h["lat"], lon=h["lon"])
+            for wp in route.geometry:
+                if wp.distance_to(hc) <= buffer_m:
+                    on_route.append(h)
+                    break
+        return on_route
+
+    # ── POI Database (Google Maps DNA) ──────────────────────────────────────
+
+    def add_poi(
+        self,
+        lat: float,
+        lon: float,
+        name: str,
+        category: str,
+        subcategory: str = "",
+        rating: float = 0.0,
+        metadata: dict | None = None,
+    ) -> dict[str, Any]:
+        """
+        Add a Point of Interest to the local database.
+
+        category: restaurant | hospital | gas_station | parking | hotel |
+                  pharmacy | supermarket | mosque | synagogue | church |
+                  school | park | mall | police_station | fire_station | atm | other
+        """
+        import uuid
+        poi_id = str(uuid.uuid4())[:12]
+        entry = {
+            "poi_id": poi_id,
+            "lat": lat,
+            "lon": lon,
+            "name": name,
+            "category": category,
+            "subcategory": subcategory,
+            "rating": round(min(5.0, max(0.0, rating)), 1),
+            "metadata": metadata or {},
+            "timestamp": time.time(),
+        }
+        self._pois.append(entry)
+        log.info("orbital_nav.poi_added", poi_id=poi_id, category=category)
+        return entry
+
+    def search_pois(
+        self,
+        query: str = "",
+        category: str | None = None,
+        lat: float | None = None,
+        lon: float | None = None,
+        radius_m: float = 5000.0,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Search POIs by name/query, category, and/or proximity."""
+        results = []
+        q_lower = query.lower()
+        for p in self._pois:
+            if category and p["category"] != category:
+                continue
+            if q_lower and q_lower not in p["name"].lower() and q_lower not in p.get("subcategory", "").lower():
+                continue
+            entry = dict(p)
+            if lat is not None and lon is not None:
+                d = Coordinate(lat=lat, lon=lon).distance_to(
+                    Coordinate(lat=p["lat"], lon=p["lon"])
+                )
+                if d > radius_m:
+                    continue
+                entry["distance_m"] = round(d, 1)
+            results.append(entry)
+
+        if lat is not None and lon is not None:
+            results.sort(key=lambda x: x.get("distance_m", 0))
+        else:
+            results.sort(key=lambda x: -x["rating"])
+
+        return results[:limit]
+
+    def nearest_poi(
+        self,
+        lat: float,
+        lon: float,
+        category: str,
+    ) -> dict[str, Any] | None:
+        """Find the nearest POI of a given category."""
+        best = None
+        best_dist = float("inf")
+        origin = Coordinate(lat=lat, lon=lon)
+        for p in self._pois:
+            if p["category"] != category:
+                continue
+            d = origin.distance_to(Coordinate(lat=p["lat"], lon=p["lon"]))
+            if d < best_dist:
+                best_dist = d
+                best = dict(p)
+                best["distance_m"] = round(d, 1)
+        return best
+
+    def poi_categories(self) -> list[str]:
+        """Return all known POI categories."""
+        return sorted({p["category"] for p in self._pois}) if self._pois else [
+            "restaurant", "hospital", "gas_station", "parking", "hotel",
+            "pharmacy", "supermarket", "mosque", "synagogue", "church",
+            "school", "park", "mall", "police_station", "fire_station", "atm",
+        ]
+
+    # ── Predictive Routing (Edge-AI Intent Engine) ───────────────────────────
+
+    def predict_route_intent(
+        self,
+        current_lat: float,
+        current_lon: float,
+        heading_deg: float,
+        speed_ms: float,
+        time_of_day: int,
+        weekday: int,
+        history: list[dict] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Predict where the driver is likely going based on current state and history.
+
+        Uses time-of-day patterns, heading, and historical destinations to generate
+        ranked predictions. Edge-AI: all computation local, no cloud dependency.
+        """
+        predictions: list[dict[str, Any]] = []
+
+        if history:
+            for h in history[:10]:
+                dest_lat = h.get("dest_lat", 0)
+                dest_lon = h.get("dest_lon", 0)
+                dest = Coordinate(lat=dest_lat, lon=dest_lon)
+                current = Coordinate(lat=current_lat, lon=current_lon)
+                bearing = current.bearing_to(dest)
+                bearing_diff = abs(heading_deg - bearing) % 360
+                if bearing_diff > 180:
+                    bearing_diff = 360 - bearing_diff
+                heading_score = max(0, 1.0 - bearing_diff / 90.0)
+                time_match = 1.0 if h.get("hour") == time_of_day else 0.5
+                day_match = 1.0 if h.get("weekday") == weekday else 0.7
+                confidence = round(heading_score * 0.5 + time_match * 0.3 + day_match * 0.2, 2)
+                predictions.append({
+                    "dest_lat": dest_lat,
+                    "dest_lon": dest_lon,
+                    "name": h.get("name", "Unknown"),
+                    "confidence": confidence,
+                    "reason": "historical_pattern",
+                })
+
+        if not predictions:
+            speed_kmh = speed_ms * 3.6
+            if 7 <= time_of_day <= 9 and weekday < 5:
+                predictions.append({
+                    "dest_lat": current_lat + 0.05,
+                    "dest_lon": current_lon + 0.03,
+                    "name": "Predicted workplace",
+                    "confidence": 0.4,
+                    "reason": "morning_commute_pattern",
+                })
+            elif 16 <= time_of_day <= 19 and weekday < 5:
+                predictions.append({
+                    "dest_lat": current_lat - 0.05,
+                    "dest_lon": current_lon - 0.03,
+                    "name": "Predicted home",
+                    "confidence": 0.4,
+                    "reason": "evening_commute_pattern",
+                })
+
+        predictions.sort(key=lambda p: -p["confidence"])
+        return {
+            "predictions": predictions[:5],
+            "total_candidates": len(predictions),
+            "edge_computed": True,
+            "model": "gane_intent_v1",
+        }
+
     # ── ETA-only (fast path, no full route computation) ──────────────────────
 
     def estimate_eta(
@@ -854,4 +1112,12 @@ class OrbitalNav:
             "sbas_count": len(self.SBAS_SYSTEMS),
             "active_route": self._route.summary() if self._route else None,
             "tracking": self._tracking,
+            "active_hazards": len([h for h in self._hazards if h["active"]]),
+            "total_pois": len(self._pois),
+            "capabilities": [
+                "6_constellation_gnss", "rtk_positioning", "multi_modal_routing",
+                "turn_by_turn_rtl", "life_corridors", "community_hazards",
+                "poi_database", "predictive_routing", "battery_aware",
+                "no_fly_zone_avoidance", "traffic_prediction",
+            ],
         }

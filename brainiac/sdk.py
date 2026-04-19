@@ -501,6 +501,102 @@ class BrainiacClient:
         r.raise_for_status()
         return r.json()
 
+    # ── Community Hazards (Waze DNA) ──────────────────────────────────────
+
+    async def report_hazard(
+        self, lat: float, lon: float, hazard_type: str,
+        description: str = "", severity: int = 5,
+    ) -> dict:
+        r = await self._client.post("/api/v1/nav/hazards", json={
+            "lat": lat, "lon": lon, "type": hazard_type,
+            "description": description, "severity": severity,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def get_hazards(
+        self, lat: float | None = None, lon: float | None = None,
+        radius_m: float = 5000.0,
+    ) -> dict:
+        params: dict = {"radius_m": radius_m}
+        if lat is not None:
+            params["lat"] = lat
+        if lon is not None:
+            params["lon"] = lon
+        r = await self._client.get("/api/v1/nav/hazards", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def upvote_hazard(self, hazard_id: str) -> dict:
+        r = await self._client.post(f"/api/v1/nav/hazards/{hazard_id}/upvote")
+        r.raise_for_status()
+        return r.json()
+
+    async def dismiss_hazard(self, hazard_id: str) -> dict:
+        r = await self._client.delete(f"/api/v1/nav/hazards/{hazard_id}")
+        r.raise_for_status()
+        return r.json()
+
+    # ── POI Database (Google Maps DNA) ──────────────────────────────────────
+
+    async def add_poi(
+        self, lat: float, lon: float, name: str, category: str,
+        rating: float = 0.0,
+    ) -> dict:
+        r = await self._client.post("/api/v1/nav/pois", json={
+            "lat": lat, "lon": lon, "name": name,
+            "category": category, "rating": rating,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def search_pois(
+        self, query: str = "", category: str | None = None,
+        lat: float | None = None, lon: float | None = None,
+        radius_m: float = 5000.0, limit: int = 20,
+    ) -> dict:
+        params: dict = {"query": query, "radius_m": radius_m, "limit": limit}
+        if category:
+            params["category"] = category
+        if lat is not None:
+            params["lat"] = lat
+        if lon is not None:
+            params["lon"] = lon
+        r = await self._client.get("/api/v1/nav/pois", params=params)
+        r.raise_for_status()
+        return r.json()
+
+    async def nearest_poi(self, lat: float, lon: float, category: str) -> dict:
+        r = await self._client.get("/api/v1/nav/pois/nearest", params={
+            "lat": lat, "lon": lon, "category": category,
+        })
+        r.raise_for_status()
+        return r.json()
+
+    async def poi_categories(self) -> dict:
+        r = await self._client.get("/api/v1/nav/pois/categories")
+        r.raise_for_status()
+        return r.json()
+
+    # ── Predictive Routing ──────────────────────────────────────────────────
+
+    async def predict_route_intent(
+        self, current_lat: float, current_lon: float,
+        heading_deg: float = 0.0, speed_ms: float = 0.0,
+        time_of_day: int = 12, weekday: int = 0,
+        history: list | None = None,
+    ) -> dict:
+        body: dict = {
+            "current_lat": current_lat, "current_lon": current_lon,
+            "heading_deg": heading_deg, "speed_ms": speed_ms,
+            "time_of_day": time_of_day, "weekday": weekday,
+        }
+        if history:
+            body["history"] = history
+        r = await self._client.post("/api/v1/nav/predict-intent", json=body)
+        r.raise_for_status()
+        return r.json()
+
     # ── Agent ────────────────────────────────────────────────────────────────
 
     async def agent_run(self, prompt: str, force_agent: str | None = None) -> dict:
