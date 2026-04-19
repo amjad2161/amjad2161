@@ -6,7 +6,7 @@ import os
 
 from fastapi import HTTPException, Request
 
-_API_KEY_HEADER = "X-API-Key"
+API_KEY_HEADER = "X-API-Key"
 
 
 def parse_keys(env: str | None) -> set[str]:
@@ -26,7 +26,7 @@ def require_api_key(request: Request, *, admin: bool = False) -> None:
     if not api_keys and not admin_keys:
         return
 
-    provided_key = request.headers.get(_API_KEY_HEADER)
+    provided_key = request.headers.get(API_KEY_HEADER)
     if not provided_key:
         raise HTTPException(status_code=401, detail="Missing API key")
 
@@ -40,5 +40,5 @@ def require_api_key(request: Request, *, admin: bool = False) -> None:
 
 def is_admin(request: Request) -> bool:
     _, admin_keys = _configured_keys()
-    provided_key = request.headers.get(_API_KEY_HEADER)
+    provided_key = request.headers.get(API_KEY_HEADER)
     return bool(provided_key and provided_key in admin_keys)

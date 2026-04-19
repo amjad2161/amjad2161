@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
-from brainiac.api.auth import is_admin, parse_keys, require_api_key
+from brainiac.api.auth import API_KEY_HEADER, parse_keys, require_api_key
 from brainiac.api.models import (
     DetectLanguageRequest,
     HealthResponse,
@@ -58,8 +58,10 @@ from brainiac.watchdog import Watchdog
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
 _MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
+# Sensitive operational and security endpoints that should require API-key auth.
 _PROTECTED_PREFIXES = ("/api/v1/system/", "/api/v1/security/")
 _ADMIN_ONLY_PATHS = {"/api/v1/system/shutdown-test", "/api/v1/security/audit-config"}
+# Empty string is intentional so missing/blank secrets also trigger warnings.
 _DEFAULT_SECRETS = {"", "default", "changeme", "CHANGE-IN-PRODUCTION", "BRAINIAC-DEFAULT-CHANGE-ME"}
 
 
@@ -262,7 +264,7 @@ async def security_middleware(request: Request, call_next):
                 headers={"X-Request-Id": request_id},
             )
 
-    rate_limit_key = request.headers.get("X-API-Key") if protected else None
+    rate_limit_key = request.headers.get(API_KEY_HEADER) if protected else None
     rate_limit_identity = rate_limit_key or client_ip
     if not shield.check_rate_limit(rate_limit_identity):
         return JSONResponse(
@@ -362,7 +364,6 @@ async def shutdown_test(request: Request):
     return {
         "marker": "shutdown_test_triggered",
         "request_id": request.headers.get("X-Request-Id"),
-        "admin": is_admin(request),
     }
 
 

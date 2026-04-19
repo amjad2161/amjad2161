@@ -59,7 +59,7 @@ jobs:
         run: cyclonedx-py environment --output-format JSON --output-file sbom.cdx.json
 
       - name: Upload SBOM artifact
-        if: always() && matrix.python-version == '3.11'
+        if: (success() || failure()) && matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
         with:
           name: cyclonedx-sbom-${{ matrix.python-version }}

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 API_KEY = "test-key"
 ADMIN_API_KEY = "test-admin-key"
+RATE_LIMIT_THRESHOLD = 100
 
 
 @pytest.fixture
@@ -327,9 +328,9 @@ def test_request_body_too_large(client):
     assert r.status_code == 413
 
 
-def test_rate_limit_for_protected_endpoint_uses_api_key(client):
-    last_response = None
-    for _ in range(101):
-        last_response = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
-    assert last_response is not None
-    assert last_response.status_code == 429
+def test_rate_limit_enforced_for_protected_endpoint(client):
+    for _ in range(RATE_LIMIT_THRESHOLD):
+        response = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
+        assert response.status_code == 200
+    rate_limited_response = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
+    assert rate_limited_response.status_code == 429
