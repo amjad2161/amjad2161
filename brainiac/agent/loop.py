@@ -193,12 +193,13 @@ class AgentLoop:
                 episode_id=episode_id,
                 agent_name=self.config.name,
                 tool_name=tu.name,
-                tool_input=dict(tu.input) if tu.input else {},
+                tool_input=dict(tu.input) if isinstance(tu.input, dict) else {},
                 reversible=self.tools.is_reversible(tu.name),
             )
             call_t0 = time.perf_counter()
+            tool_inputs = dict(tu.input) if isinstance(tu.input, dict) else {}
             result: ToolResult = await self.tools.call(
-                tu.name, tu.input,
+                tu.name, tool_inputs,
                 skip_confirm=self.config.auto_approve_tools,
             )
             decision.duration_ms = (time.perf_counter() - call_t0) * 1000

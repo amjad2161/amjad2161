@@ -253,6 +253,12 @@ class BrainiacSync:
         self._client = BrainiacClient(base_url, **kwargs)
         self._loop = asyncio.new_event_loop()
 
+    def __enter__(self) -> "BrainiacSync":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     def _run(self, coro):
         return self._loop.run_until_complete(coro)
 
@@ -271,3 +277,11 @@ class BrainiacSync:
     def close(self) -> None:
         self._run(self._client.close())
         self._loop.close()
+
+    def __del__(self) -> None:
+        try:
+            if not self._loop.is_closed():
+                self._run(self._client.close())
+                self._loop.close()
+        except Exception:
+            pass

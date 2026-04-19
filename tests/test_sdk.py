@@ -3,7 +3,7 @@ import asyncio
 import pytest
 import httpx
 
-from brainiac.sdk import BrainiacClient
+from brainiac.sdk import BrainiacClient, BrainiacSync
 from brainiac.api.main import app
 
 
@@ -101,3 +101,10 @@ async def test_badge(client):
 async def test_audit_config(client):
     result = await client.audit_config({"debug": True, "https_only": False})
     assert result["risk_score"] > 0
+
+
+def test_brainiac_sync_context_manager():
+    sync = BrainiacSync(base_url="http://localhost:9999")
+    assert hasattr(sync, "__enter__")
+    assert hasattr(sync, "__exit__")
+    sync.close()

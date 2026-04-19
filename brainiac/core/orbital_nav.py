@@ -469,6 +469,52 @@ class OrbitalNav:
                     break
         return len(conflicts) == 0, conflicts
 
+    def is_route_clear_poly(
+        self,
+        route: Route,
+        no_fly_polygons: list[list[Coordinate]],
+    ) -> tuple[bool, list[int]]:
+        """
+        Check whether a route's geometry passes through any polygon no-fly zone.
+
+        Returns (is_clear, conflicting_zone_indices).
+        no_fly_polygons: list of polygon vertex lists.
+        """
+        conflicts: list[int] = []
+        for idx, polygon in enumerate(no_fly_polygons):
+            for waypoint in route.geometry:
+                if self.geofence_polygon(waypoint, polygon):
+                    conflicts.append(idx)
+                    break
+        return len(conflicts) == 0, conflicts
+
+    @staticmethod
+    def interpolate_geometry(
+        geometry: list[Coordinate], max_gap_m: float = 500.0,
+    ) -> list[Coordinate]:
+        """
+        Densify a route geometry so no two consecutive points are more than
+        max_gap_m apart. Useful for precise no-fly zone checks on long segments.
+        """
+        if len(geometry) < 2:
+            return list(geometry)
+        result: list[Coordinate] = [geometry[0]]
+        for i in range(1, len(geometry)):
+            a, b = geometry[i - 1], geometry[i]
+            gap = a.distance_to(b)
+            if gap <= max_gap_m:
+                result.append(b)
+                continue
+            n_segments = math.ceil(gap / max_gap_m)
+            for s in range(1, n_segments):
+                t = s / n_segments
+                result.append(Coordinate(
+                    lat=a.lat + (b.lat - a.lat) * t,
+                    lon=a.lon + (b.lon - a.lon) * t,
+                ))
+            result.append(b)
+        return result
+
     # ── Traffic / Weather-Aware ETA Adjustment ───────────────────────────────
 
     def adjust_eta_for_conditions(

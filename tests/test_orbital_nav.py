@@ -173,6 +173,137 @@ def test_eta_adjustment_combined():
 def test_eta_adjustment_clamps_negative_factors():
     nav = OrbitalNav()
     base = 600.0
-    # Even with zero/negative inputs it stays positive (min 0.1)
     adjusted = nav.adjust_eta_for_conditions(base, traffic_factor=0.0, weather_factor=-1.0)
     assert adjusted > 0
+
+
+# ── Polygon No-Fly Zones ────────────────────────────────────────────────────
+
+def test_route_clear_poly_outside():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[],
+        total_distance_m=1000,
+        total_duration_s=60,
+        mode=TransportMode.DRIVE,
+        precision=PrecisionMode.RTK,
+        geometry=[Coordinate(lat=32.0, lon=34.0), Coordinate(lat=33.0, lon=35.0)],
+    )
+    polygon = [
+        Coordinate(lat=10.0, lon=10.0),
+        Coordinate(lat=10.0, lon=11.0),
+        Coordinate(lat=11.0, lon=11.0),
+        Coordinate(lat=11.0, lon=10.0),
+    ]
+    is_clear, conflicts = nav.is_route_clear_poly(route, [polygon])
+    assert is_clear is True
+    assert conflicts == []
+
+
+def test_route_blocked_by_poly_zone():
+    nav = OrbitalNav()
+    route = Route(
+        origin=Coordinate(lat=32.0, lon=34.0),
+        destination=Coordinate(lat=33.0, lon=35.0),
+        waypoints=[],
+        total_distance_m=1000,
+        total_duration_s=60,
+        mode=TransportMode.DRONE,
+        precision=PrecisionMode.RTK,
+        geometry=[
+            Coordinate(lat=32.0, lon=34.0),
+            Coordinate(lat=32.5, lon=34.5),
+            Coordinate(lat=33.0, lon=35.0),
+        ],
+    )
+    polygon = [
+        Coordinate(lat=32.3, lon=34.3),
+        Coordinate(lat=32.3, lon=34.7),
+        Coordinate(lat=32.7, lon=34.7),
+        Coordinate(lat=32.7, lon=34.3),
+    ]
+    is_clear, conflicts = nav.is_route_clear_poly(route, [polygon])
+    assert is_clear is False
+    assert conflicts == [0]
+
+
+# ── Geometry Interpolation ───────────────────────────────────────────────────
+
+def test_interpolate_short_segment_unchanged():
+    """Segments shorter than max_gap should not gain extra points."""
+    a = Coordinate(lat=32.0, lon=34.0)
+    b = Coordinate(lat=32.001, lon=34.001)
+    result = OrbitalNav.interpolate_geometry([a, b], max_gap_m=50_000)
+    assert len(result) == 2
+
+
+def test_interpolate_long_segment_densified():
+    """A ~157km segment with max_gap=50km should produce intermediate points."""
+    a = Coordinate(lat=32.0, lon=34.0)
+    b = Coordinate(lat=33.0, lon=35.0)
+    result = OrbitalNav.interpolate_geometry([a, b], max_gap_m=50_000)
+    assert len(result) >= 4
+    assert result[0].lat == pytest.approx(a.lat)
+    assert result[-1].lat == pytest.approx(b.lat)
+
+
+def test_interpolate_empty_and_single():
+    assert OrbitalNav.interpolate_geometry([]) == []
+    pt = Coordinate(lat=32.0, lon=34.0)
+    result = OrbitalNav.interpolate_geometry([pt])
+    assert len(result) == 1
+
+
+# ── Geofence Polygon ────────────────────────────────────────────────────────
+
+def test_geofence_polygon_inside():
+    nav = OrbitalNav()
+    polygon = [
+        Coordinate(lat=32.0, lon=34.0),
+        Coordinate(lat=32.0, lon=35.0),
+        Coordinate(lat=33.0, lon=35.0),
+        Coordinate(lat=33.0, lon=34.0),
+    ]
+    point = Coordinate(lat=32.5, lon=34.5)
+    assert nav.geofence_polygon(point, polygon) is True
+
+
+def test_geofence_polygon_outside():
+    nav = OrbitalNav()
+    polygon = [
+        Coordinate(lat=32.0, lon=34.0),
+        Coordinate(lat=32.0, lon=35.0),
+        Coordinate(lat=33.0, lon=35.0),
+        Coordinate(lat=33.0, lon=34.0),
+    ]
+    point = Coordinate(lat=31.0, lon=33.0)
+    assert nav.geofence_polygon(point, polygon) is False
+
+
+def test_geofence_polygon_degenerate():
+    nav = OrbitalNav()
+    assert nav.geofence_polygon(Coordinate(lat=0, lon=0), []) is False
+    assert nav.geofence_polygon(
+        Coordinate(lat=0, lon=0),
+        [Coordinate(lat=1, lon=1), Coordinate(lat=2, lon=2)],
+    ) is False
+
+
+# ── ETA Estimate (fast path) ────────────────────────────────────────────────
+
+def test_estimate_eta_returns_correct_keys():
+    nav = OrbitalNav()
+    result = nav.estimate_eta(
+        Coordinate(lat=32.0, lon=34.0),
+        Coordinate(lat=33.0, lon=35.0),
+        mode=TransportMode.DRIVE,
+    )
+    assert "distance_m" in result
+    assert "distance_km" in result
+    assert "duration_s" in result
+    assert "eta_minutes" in result
+    assert "speed_kmh" in result
+    assert result["distance_m"] > 0
+    assert result["duration_s"] > 0
