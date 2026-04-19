@@ -13,13 +13,14 @@ Verifies that every module in G.A.N.E serves the navigation system:
 - OmniVision: obstacle detection
 - Localization: RTL turn-by-turn
 - MedicalProtocols: en-route medical emergencies
+- INS: inertial fallback for GNSS-denied environments
 """
 import pytest
 
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
-    Localization, MedicalProtocols,
+    Localization, MedicalProtocols, INS,
 )
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 
@@ -39,6 +40,7 @@ def test_all_modules_declare_navigation_role():
         "omni_vision":     OmniVision(),
         "localization":    Localization(),
         "medical":         MedicalProtocols(),
+        "ins":             INS(),
     }
     for name, mod in instances.items():
         d = mod.diagnostics()
@@ -175,3 +177,46 @@ async def test_satlink_supports_navigation_uplink():
     d = satlink.diagnostics()
     assert "rtk_corrections_uplink" in d["capabilities"]
     assert "emergency_sos" in d["capabilities"]
+
+
+# ── INS provides GNSS-denied navigation fallback ─────────────────────────────
+
+def test_ins_declares_navigation_role():
+    ins = INS()
+    d = ins.diagnostics()
+    assert d["navigation_role"] == "inertial_fallback"
+    assert "dead_reckoning" in d["capabilities"]
+    assert "gnss_ins_blending" in d["capabilities"]
+
+
+@pytest.mark.asyncio
+async def test_ins_gnss_fusion_via_orchestrator():
+    """Orchestrator fused_position must combine GNSS + INS."""
+    from brainiac import Brainiac
+    bot = Brainiac(secret_key="nav-integ-ins")
+    await bot.boot()
+    result = await bot.fused_position()
+    assert result["source"] in ("GNSS", "INS", "FUSED", "UNKNOWN")
+    assert result["gnss_health"]["constellations"] == 6
+    assert result["accuracy_m"] >= 0
+    await bot.shutdown()
+
+
+def test_ins_corridor_monitoring_on_route():
+    """INS corridor check should detect when position is on a route."""
+    ins = INS()
+    ins.seed_position(lat=32.0853, lon=34.7818)
+    route = [(32.0853, 34.7818), (32.0900, 34.7900)]
+    result = ins.corridor_check(route, threshold_m=100.0)
+    assert result["on_route"] is True
+    assert result["alert"] == "OK"
+
+
+def test_ins_corridor_monitoring_off_route():
+    """INS corridor check should alert when position deviates from route."""
+    ins = INS()
+    ins.seed_position(lat=32.0853, lon=34.7818)
+    route = [(33.0, 36.0), (33.1, 36.1)]  # far away
+    result = ins.corridor_check(route, threshold_m=50.0)
+    assert result["on_route"] is False
+    assert result["alert"] == "OFF_ROUTE"

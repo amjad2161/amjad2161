@@ -1,7 +1,7 @@
 """
 BRAINIAC API — FastAPI Application Entry Point
 ===============================================
-All 9 core modules exposed via REST + WebSocket endpoints.
+All 12 core modules exposed via REST + WebSocket endpoints.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
-    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
+    NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, INS,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
@@ -61,6 +61,7 @@ shield  = CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCT
 creative= CreativeEngine()
 vision  = OmniVision()
 medical = MedicalProtocols()
+ins     = INS()
 
 _agent_router = AgentRouter(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
@@ -168,7 +169,7 @@ async def root():
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="2.0.0",
+        version="2.1.0",
         modules={
             "neuro_core":        "ONLINE",
             "orbital_nav":       "ONLINE",
@@ -181,6 +182,7 @@ async def health():
             "omni_vision":       "ONLINE",
             "localization":      "ONLINE",
             "medical_protocols": "ONLINE",
+            "ins":               "ONLINE",
         },
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -198,6 +200,7 @@ async def diagnostics():
         "cyber_shield":    shield.diagnostics(),
         "creative_engine": creative.diagnostics(),
         "omni_vision":     vision.diagnostics(),
+        "ins":             ins.diagnostics(),
     }
 
 
@@ -742,6 +745,69 @@ async def detect_gps_spoofing(
         previous_ts=previous_ts, current_ts=current_ts,
         hdop=hdop,
     )
+
+
+# ── INS (Inertial Navigation System) ────────────────────────────────────────
+
+@app.get("/api/v1/ins/position", tags=["INS"])
+async def ins_position():
+    """Get current INS position (GNSS/INS fused or dead-reckoning fallback)."""
+    sats = await nav.get_satellite_status()
+    total_used = sum(s.satellites_used for s in sats)
+    best_hdop = min((s.hdop for s in sats), default=99.0)
+    best_fix = "NO_FIX"
+    for s in sats:
+        if s.fix_type in ("RTK_FIXED", "RTK_FLOAT", "3D"):
+            best_fix = s.fix_type
+            break
+    health = ins.update_gnss_health(
+        constellations_available=len(sats),
+        total_satellites_used=total_used,
+        best_hdop=best_hdop,
+        fix_type=best_fix,
+    )
+    if health.gnss_available:
+        gnss_pos = await nav.get_position()
+        ins_pos = ins.update_gnss(gnss_pos.lat, gnss_pos.lon, gnss_pos.alt_m, gnss_pos.accuracy_m)
+    else:
+        ins_pos = ins.position()
+    return {
+        "lat": ins_pos.lat, "lon": ins_pos.lon, "alt_m": ins_pos.alt_m,
+        "heading_deg": ins_pos.heading_deg, "speed_ms": ins_pos.speed_ms,
+        "source": ins_pos.source.value, "accuracy_m": ins_pos.accuracy_m,
+        "drift_m": ins_pos.drift_m,
+        "gnss_health": {"score": health.score, "available": health.gnss_available,
+                        "constellations": health.constellations_available},
+        "ins_state": ins.state.value,
+    }
+
+
+@app.get("/api/v1/ins/health", tags=["INS"])
+async def ins_health():
+    """Get GNSS health score and INS state."""
+    return {
+        "ins_state": ins.state.value,
+        "gnss_health": {
+            "score": ins.get_gnss_health().score,
+            "available": ins.get_gnss_health().gnss_available,
+            "constellations": ins.get_gnss_health().constellations_available,
+            "satellites_used": ins.get_gnss_health().total_satellites_used,
+            "best_hdop": ins.get_gnss_health().best_hdop,
+            "fix_type": ins.get_gnss_health().fix_type,
+        },
+        "diagnostics": ins.diagnostics(),
+    }
+
+
+@app.post("/api/v1/ins/corridor-check", tags=["INS"])
+async def corridor_check(request: Request, threshold_m: float = 50.0):
+    """Check if current position is within a route corridor."""
+    body = await request.json()
+    route_coords = body.get("route_coords", [])
+    if not route_coords:
+        raise HTTPException(status_code=400, detail="route_coords is required (list of [lat,lon])")
+    coord_tuples = [(c[0], c[1]) for c in route_coords]
+    return ins.corridor_check(coord_tuples, threshold_m=threshold_m)
 
 
 @app.post("/api/v1/security/audit-config", tags=["CYBER-SHIELD"])

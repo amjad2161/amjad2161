@@ -21,7 +21,7 @@ async def client():
 async def test_health(client):
     data = await client.health()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 11
+    assert len(data["modules"]) == 12
 
 
 @pytest.mark.asyncio

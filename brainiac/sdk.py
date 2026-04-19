@@ -350,6 +350,52 @@ class BrainiacClient:
         r.raise_for_status()
         return r.json()
 
+    # ── INS (Inertial Navigation) ──────────────────────────────────────────
+
+    async def ins_position(self) -> dict:
+        r = await self._client.get("/api/v1/ins/position")
+        r.raise_for_status()
+        return r.json()
+
+    async def ins_health(self) -> dict:
+        r = await self._client.get("/api/v1/ins/health")
+        r.raise_for_status()
+        return r.json()
+
+    async def corridor_check(
+        self, route_coords: list[list[float]], threshold_m: float = 50.0,
+    ) -> dict:
+        r = await self._client.post(
+            "/api/v1/ins/corridor-check",
+            params={"threshold_m": threshold_m},
+            json={"route_coords": route_coords},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # ── GPS Spoofing Detection ──────────────────────────────────────────────
+
+    async def detect_gps_spoofing(
+        self, reported_lat: float, reported_lon: float, hdop: float = 1.0,
+        previous_lat: float | None = None, previous_lon: float | None = None,
+        previous_ts: float | None = None, current_ts: float | None = None,
+    ) -> dict:
+        params: dict = {
+            "reported_lat": reported_lat, "reported_lon": reported_lon,
+            "hdop": hdop,
+        }
+        if previous_lat is not None:
+            params["previous_lat"] = previous_lat
+        if previous_lon is not None:
+            params["previous_lon"] = previous_lon
+        if previous_ts is not None:
+            params["previous_ts"] = previous_ts
+        if current_ts is not None:
+            params["current_ts"] = current_ts
+        r = await self._client.post("/api/v1/security/detect-gps-spoofing", params=params)
+        r.raise_for_status()
+        return r.json()
+
     # ── Agent ────────────────────────────────────────────────────────────────
 
     async def agent_run(self, prompt: str, force_agent: str | None = None) -> dict:

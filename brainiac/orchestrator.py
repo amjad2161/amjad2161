@@ -1,7 +1,7 @@
 """
 BRAINIAC ORCHESTRATOR — Master System Controller
 ==================================================
-Unifies all 9 core modules into a single cohesive autonomous intelligence.
+Unifies all 12 core modules into a single cohesive autonomous intelligence.
 Provides mission planning, auto-wiring, self-healing, and high-level
 operations that span multiple modules.
 
@@ -21,7 +21,7 @@ import structlog
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
-    Localization, MedicalProtocols,
+    Localization, MedicalProtocols, INS,
 )
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
@@ -109,6 +109,7 @@ class Brainiac:
         self.vision   = OmniVision()
         self.localization = Localization()
         self.medical  = MedicalProtocols()
+        self.ins      = INS()
 
         self._state      = SystemState.BOOTING
         self._boot_time  = time.time()
@@ -383,6 +384,59 @@ class Brainiac:
             },
         }
 
+    # ── GNSS/INS Fused Position ──────────────────────────────────────────────
+
+    async def fused_position(self) -> dict[str, Any]:
+        """
+        Get position using GNSS/INS fusion.
+
+        Queries GNSS satellites; if health is good, updates INS with GNSS fix.
+        If GNSS is degraded, INS dead-reckoning continues autonomously.
+        Returns the best available position with source indication.
+        """
+        sats = await self.nav.get_satellite_status()
+        total_used = sum(s.satellites_used for s in sats)
+        best_hdop = min((s.hdop for s in sats), default=99.0)
+        best_fix = "NO_FIX"
+        for s in sats:
+            if s.fix_type in ("RTK_FIXED", "RTK_FLOAT", "3D"):
+                best_fix = s.fix_type
+                break
+
+        health = self.ins.update_gnss_health(
+            constellations_available=len(sats),
+            total_satellites_used=total_used,
+            best_hdop=best_hdop,
+            fix_type=best_fix,
+        )
+
+        if health.gnss_available:
+            gnss_pos = await self.nav.get_position()
+            ins_pos = self.ins.update_gnss(
+                gnss_pos.lat, gnss_pos.lon, gnss_pos.alt_m, gnss_pos.accuracy_m,
+            )
+        else:
+            ins_pos = self.ins.position()
+
+        return {
+            "lat": ins_pos.lat,
+            "lon": ins_pos.lon,
+            "alt_m": ins_pos.alt_m,
+            "heading_deg": ins_pos.heading_deg,
+            "speed_ms": ins_pos.speed_ms,
+            "source": ins_pos.source.value,
+            "accuracy_m": ins_pos.accuracy_m,
+            "drift_m": ins_pos.drift_m,
+            "gnss_health": {
+                "score": health.score,
+                "available": health.gnss_available,
+                "constellations": health.constellations_available,
+                "satellites_used": health.total_satellites_used,
+                "best_hdop": health.best_hdop,
+            },
+            "ins_state": self.ins.state.value,
+        }
+
     # ── Health & Self-Diagnostic ──────────────────────────────────────────────
 
     async def health_report(self) -> HealthReport:
@@ -400,6 +454,7 @@ class Brainiac:
             "omni_vision":       self.vision.diagnostics()["status"],
             "localization":      "ONLINE",
             "medical_protocols": self.medical.diagnostics()["status"],
+            "ins":               self.ins.diagnostics()["status"],
         }
 
         offline = [name for name, status in modules.items() if status == "OFFLINE"]

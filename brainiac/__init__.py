@@ -20,11 +20,12 @@ from brainiac.core.nexus_sync import DeviceType, Protocol
 from brainiac.core.neuro_core import ReasoningDepth
 from brainiac.core.localization import Localization, Language
 from brainiac.core.medical_protocols import MedicalProtocols
+from brainiac.core.ins import INS, PositionSource
 from brainiac.agent import (
     AgentRouter, TelemetryAnalystAgent, MedicalContentAgent, NavigationAgent,
 )
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __codename__ = "GANE"
 __author__ = "amjad2161"
 
@@ -45,6 +46,8 @@ __all__ = [
     "Localization",
     "Language",
     "MedicalProtocols",
+    "INS",
+    "PositionSource",
     "AgentRouter",
     "TelemetryAnalystAgent",
     "MedicalContentAgent",

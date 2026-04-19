@@ -1,4 +1,4 @@
-"""GANE Core Modules — 11 subsystems powering the GANE platform."""
+"""GANE Core Modules — 12 subsystems powering the GANE platform."""
 from .neuro_core import NeuroCore
 from .orbital_nav import OrbitalNav
 from .sonic_matrix import SonicMatrix
@@ -10,6 +10,7 @@ from .creative_engine import CreativeEngine
 from .omni_vision import OmniVision
 from .localization import Localization
 from .medical_protocols import MedicalProtocols
+from .ins import INS
 
 __all__ = [
     "NeuroCore",
@@ -23,4 +24,5 @@ __all__ = [
     "OmniVision",
     "Localization",
     "MedicalProtocols",
+    "INS",
 ]

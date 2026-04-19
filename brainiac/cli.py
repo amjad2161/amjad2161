@@ -5,7 +5,8 @@ Usage:
     python -m brainiac.cli status                           — module status
     python -m brainiac.cli serve                            — start API server
     python -m brainiac.cli nav route <olat,olon> <dlat,dlon> [mode] [lang]
-    python -m brainiac.cli nav position                     — current GPS position
+    python -m brainiac.cli nav position                     — current GPS + INS position
+    python -m brainiac.cli nav ins                          — INS/GNSS fusion status
     python -m brainiac.cli medical triage <HR> <RR> <SBP> <GCS>
     python -m brainiac.cli medical dose <drug> <weight_kg>
     python -m brainiac.cli boot                             — full orchestrator boot
@@ -20,7 +21,7 @@ def _print_banner() -> None:
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
 ║         G.A.N.E — GLOBAL AUTONOMOUS NAVIGATION ENGINE            ║
-║                      v2.0.0 — GANE                               ║
+║                      v2.1.0 — GANE                               ║
 ╚══════════════════════════════════════════════════════════════════╝
 """)
 
@@ -29,10 +30,10 @@ async def _cmd_status() -> int:
     from brainiac.core import (
         NeuroCore, OrbitalNav, SonicMatrix, SatLink,
         NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision,
-        Localization, MedicalProtocols,
+        Localization, MedicalProtocols, INS,
     )
     _print_banner()
-    print("▶ Verifying all 11 core modules...\n")
+    print("▶ Verifying all 12 core modules...\n")
 
     modules = {
         "NEURO-CORE       ": NeuroCore(),
@@ -46,6 +47,7 @@ async def _cmd_status() -> int:
         "OMNI-VISION      ": OmniVision(),
         "LOCALIZATION     ": Localization(),
         "MEDICAL-PROTOCOLS": MedicalProtocols(),
+        "INS              ": INS(),
     }
 
     print("┌───────────────────┬────────────┐")
@@ -131,6 +133,28 @@ async def _cmd_nav_position() -> int:
     return 0
 
 
+async def _cmd_nav_ins() -> int:
+    from brainiac import Brainiac
+    _print_banner()
+    bot = Brainiac()
+    await bot.boot()
+    print("▶ GNSS/INS Fusion Status …\n")
+    result = await bot.fused_position()
+    print(f"  ✓ Position:   ({result['lat']:.6f}, {result['lon']:.6f})")
+    print(f"  ✓ Altitude:   {result['alt_m']}m")
+    print(f"  ✓ Heading:    {result['heading_deg']}°")
+    print(f"  ✓ Speed:      {result['speed_ms']} m/s")
+    print(f"  ✓ Source:     {result['source']}")
+    print(f"  ✓ Accuracy:   {result['accuracy_m']}m")
+    print(f"  ✓ Drift:      {result['drift_m']}m")
+    print(f"  ✓ INS state:  {result['ins_state']}")
+    gh = result["gnss_health"]
+    print(f"  ✓ GNSS health: score={gh['score']}, available={gh['available']}, "
+          f"sats={gh['satellites_used']}, hdop={gh['best_hdop']}")
+    await bot.shutdown()
+    return 0
+
+
 def _cmd_medical_triage(hr: int, rr: int, sbp: int, gcs: int) -> int:
     from brainiac.core import MedicalProtocols
     _print_banner()
@@ -178,6 +202,7 @@ def _print_help() -> None:
     print("  serve                                           — Start FastAPI server")
     print("  nav route <olat,olon> <dlat,dlon> [mode] [lang] — Route with turn-by-turn")
     print("  nav position                                    — Current GPS position")
+    print("  nav ins                                         — GNSS/INS fusion status")
     print("  medical triage <HR> <RR> <SBP> <GCS>            — Vital-sign triage")
     print("  medical dose <drug> <weight_kg>                 — Weight-based dosing")
 
@@ -199,6 +224,8 @@ def main() -> int:
         sub = args[1] if len(args) > 1 else ""
         if sub == "position":
             return asyncio.run(_cmd_nav_position())
+        if sub == "ins":
+            return asyncio.run(_cmd_nav_ins())
         if sub == "route":
             try:
                 olat, olon = _parse_coord_pair(args[2])

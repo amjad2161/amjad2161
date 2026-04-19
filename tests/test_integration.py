@@ -134,15 +134,16 @@ def test_creative_generates_badge_for_status():
 
 
 @pytest.mark.asyncio
-async def test_full_gane_boot_11_modules():
-    """Full orchestrator must bring up all 11 modules including Localization and Medical."""
+async def test_full_gane_boot_12_modules():
+    """Full orchestrator must bring up all 12 modules including Localization, Medical, and INS."""
     from brainiac import Brainiac
     bot = Brainiac(secret_key="integration-test")
     report = await bot.boot()
     assert report.system_state.value == "ONLINE"
-    assert len(report.modules) == 11
+    assert len(report.modules) == 12
     assert "localization" in report.modules
     assert "medical_protocols" in report.modules
+    assert "ins" in report.modules
     for name, status in report.modules.items():
         assert status == "ONLINE", f"{name} is {status}"
     await bot.shutdown()
