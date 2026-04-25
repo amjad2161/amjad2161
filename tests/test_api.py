@@ -28,6 +28,39 @@ def client(monkeypatch):
             yield test_client
 
 
+@pytest.fixture
+def unsecured_client(monkeypatch):
+    monkeypatch.setenv("BRAINIAC_SECRET", "test-secret-for-api")
+    monkeypatch.delenv("BRAINIAC_API_KEYS", raising=False)
+    monkeypatch.delenv("BRAINIAC_ADMIN_API_KEYS", raising=False)
+    monkeypatch.delenv("BRAINIAC_ALLOW_INSECURE_AUTH", raising=False)
+    with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
+        from brainiac.api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            yield test_client
+
+
+@pytest.fixture
+def insecure_mode_client(monkeypatch):
+    monkeypatch.setenv("BRAINIAC_SECRET", "test-secret-for-api")
+    monkeypatch.delenv("BRAINIAC_API_KEYS", raising=False)
+    monkeypatch.delenv("BRAINIAC_ADMIN_API_KEYS", raising=False)
+    monkeypatch.setenv("BRAINIAC_ALLOW_INSECURE_AUTH", "true")
+    with patch("brainiac.core.neuro_core.anthropic.AsyncAnthropic"):
+        from brainiac.api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as test_client:
+            yield test_client
+
+
+def _assert_standard_security_headers(response):
+    assert response.headers.get("X-Frame-Options") == "DENY"
+    assert response.headers.get("X-Content-Type-Options") == "nosniff"
+    assert "GENESIS" in response.headers.get("X-BRAINIAC-Node", "")
+    assert response.headers.get("X-Request-Id")
+
+
 def test_root(client):
     r = client.get("/")
     assert r.status_code == 200
@@ -87,6 +120,18 @@ def test_cost_stats_endpoint(client):
 def test_cost_stats_requires_api_key(client):
     r = client.get("/api/v1/system/cost-stats")
     assert r.status_code == 401
+    _assert_standard_security_headers(r)
+
+
+def test_cost_stats_fails_closed_when_auth_not_configured(unsecured_client):
+    r = unsecured_client.get("/api/v1/system/cost-stats")
+    assert r.status_code == 503
+    _assert_standard_security_headers(r)
+
+
+def test_cost_stats_allows_insecure_mode_override(insecure_mode_client):
+    r = insecure_mode_client.get("/api/v1/system/cost-stats")
+    assert r.status_code == 200
 
 
 def test_watchdog_endpoint(client):
@@ -98,11 +143,13 @@ def test_watchdog_endpoint(client):
 def test_shutdown_test_requires_admin(client):
     r = client.post("/api/v1/system/shutdown-test", headers={"X-API-Key": API_KEY})
     assert r.status_code == 403
+    _assert_standard_security_headers(r)
 
 
 def test_shutdown_test_requires_api_key(client):
     r = client.post("/api/v1/system/shutdown-test")
     assert r.status_code == 401
+    _assert_standard_security_headers(r)
 
 
 def test_shutdown_test_admin(client):
@@ -234,7 +281,9 @@ def test_scan_sql_injection(client):
 
 def test_audit_config(client):
     config = {"debug": True, "secret_key": "changeme", "https_only": False}
-    r = client.post("/api/v1/security/audit-config", json=config, headers={"X-API-Key": ADMIN_API_KEY})
+    r = client.post(
+        "/api/v1/security/audit-config", json=config, headers={"X-API-Key": ADMIN_API_KEY}
+    )
     assert r.status_code == 200
     data = r.json()
     assert data["risk_score"] > 0
@@ -276,10 +325,7 @@ def test_register_and_list_device(client):
 
 def test_security_headers(client):
     r = client.get("/")
-    assert r.headers.get("X-Frame-Options") == "DENY"
-    assert r.headers.get("X-Content-Type-Options") == "nosniff"
-    assert "GENESIS" in r.headers.get("X-BRAINIAC-Node", "")
-    assert r.headers.get("X-Request-Id")
+    _assert_standard_security_headers(r)
 
 
 def test_request_id_passthrough(client):
@@ -334,3 +380,4 @@ def test_rate_limit_enforced_for_protected_endpoint(client):
         assert response.status_code == 200
     rate_limited_response = client.get("/api/v1/system/cost-stats", headers={"X-API-Key": API_KEY})
     assert rate_limited_response.status_code == 429
+    _assert_standard_security_headers(rate_limited_response)

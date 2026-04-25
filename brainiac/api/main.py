@@ -63,6 +63,7 @@ _PROTECTED_PREFIXES = ("/api/v1/system/", "/api/v1/security/")
 _ADMIN_ONLY_PATHS = {"/api/v1/system/shutdown-test", "/api/v1/security/audit-config"}
 # Empty string is intentional so missing/blank secrets also trigger warnings.
 _DEFAULT_SECRETS = {"", "default", "changeme", "CHANGE-IN-PRODUCTION", "BRAINIAC-DEFAULT-CHANGE-ME"}
+_NODE_NAME = "GENESIS-1"
 
 
 def _build_modules() -> dict[str, Any]:
@@ -138,6 +139,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.module_health = _module_health()
     app.state.active_stream_tasks = set()
     app.state.shutdown_event = asyncio.Event()
+    app.state.api_keys = api_keys
+    app.state.admin_api_keys = admin_keys
     app.state.watchdog = Watchdog(
         modules=app.state.modules,
         factories=_module_factories(),
@@ -242,6 +245,19 @@ def _track_stream_task_end(task: asyncio.Task[Any] | None) -> None:
         app.state.active_stream_tasks.discard(task)
 
 
+def _set_security_headers(response: Response, request_id: str) -> Response:
+    response.headers["X-Request-Id"] = request_id
+    response.headers["X-BRAINIAC-Node"] = _NODE_NAME
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+def _error_response(status_code: int, content: dict[str, Any], request_id: str) -> Response:
+    response = JSONResponse(status_code=status_code, content=content)
+    return _set_security_headers(response, request_id)
+
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
@@ -258,19 +274,15 @@ async def security_middleware(request: Request, call_next):
         try:
             require_api_key(request, admin=_is_admin_endpoint(request_path))
         except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-                headers={"X-Request-Id": request_id},
+            return _error_response(
+                status_code=exc.status_code, content={"detail": exc.detail}, request_id=request_id
             )
 
     rate_limit_key = request.headers.get(API_KEY_HEADER) if protected else None
     rate_limit_identity = rate_limit_key or client_ip
     if not shield.check_rate_limit(rate_limit_identity):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Rate limit exceeded"},
-            headers={"X-Request-Id": request_id},
+        return _error_response(
+            status_code=429, content={"error": "Rate limit exceeded"}, request_id=request_id
         )
 
     if request.method in ("POST", "PUT", "PATCH"):
@@ -281,10 +293,10 @@ async def security_middleware(request: Request, call_next):
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:
-                return JSONResponse(
+                return _error_response(
                     status_code=400,
                     content={"error": "Malicious input detected"},
-                    headers={"X-Request-Id": request_id},
+                    request_id=request_id,
                 )
 
             async def receive() -> dict[str, Any]:
@@ -292,19 +304,14 @@ async def security_middleware(request: Request, call_next):
 
             request = Request(request.scope, receive)
         except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-                headers={"X-Request-Id": request_id},
+            return _error_response(
+                status_code=exc.status_code, content={"detail": exc.detail}, request_id=request_id
             )
         except Exception:
             pass
 
     response = await call_next(request)
-    response.headers["X-Request-Id"] = request_id
-    response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    _set_security_headers(response, request_id)
     log.info(
         "http.response", method=request.method, path=request.url.path, status=response.status_code
     )
@@ -359,7 +366,6 @@ async def watchdog_status():
 
 @app.post("/api/v1/system/shutdown-test", tags=["System"])
 async def shutdown_test(request: Request):
-    require_api_key(request, admin=True)
     app.state.shutdown_event.set()
     return {
         "marker": "shutdown_test_triggered",
