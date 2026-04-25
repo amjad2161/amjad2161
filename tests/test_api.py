@@ -74,7 +74,7 @@ def test_health(client):
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "ONLINE"
-    assert len(data["modules"]) == 9
+    assert len(data["modules"]) == 12
     assert data["uptime_s"] >= 0
 
 

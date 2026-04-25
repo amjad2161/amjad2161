@@ -1,6 +1,6 @@
-# BRAINIAC AI (v1.0.0)
+# BRAINIAC AI (v1.1.0 "MATRIX")
 
-BRAINIAC is a FastAPI-based platform exposing **9 real core modules**:
+BRAINIAC is a FastAPI-based platform exposing **12 real core modules**:
 
 | Module | Purpose |
 |---|---|
@@ -13,6 +13,9 @@ BRAINIAC is a FastAPI-based platform exposing **9 real core modules**:
 | CyberShield | Input scanning, rate limiting, HMAC signing, file hash checks |
 | CreativeEngine | Prompt generation, SVG badges, 3D scene specs |
 | OmniVision | Image metadata, dominant colors, thermal simulation with guarded imports |
+| QuantumMind | Quantum-inspired probability trees, multi-scenario superposition/collapse, MCDM decision matrix, exponential-smoothing prediction |
+| EmotionEngine | VAD-model emotional intelligence, lexical sentiment, Big Five personality profiling, empathy mapping, adaptive communication tone |
+| NeuralMatrix | Multi-agent swarm intelligence, role-based agent spawning, parallel task graphs, consensus voting (majority/weighted/Borda), federated knowledge base |
 
 ## Install
 
@@ -54,6 +57,14 @@ Notable system endpoints:
 - `GET /api/v1/system/watchdog`
 - `POST /api/v1/system/shutdown-test` (admin API key required)
 - `GET /api/v1/nav/cache-stats`
+
+JARVIS-tier module endpoints:
+
+| Module | Endpoints |
+|---|---|
+| QuantumMind | `POST /api/v1/quantum/superpose`, `POST /api/v1/quantum/collapse`, `POST /api/v1/quantum/decision-matrix`, `POST /api/v1/quantum/predict` |
+| EmotionEngine | `POST /api/v1/emotion/sentiment`, `POST /api/v1/emotion/empathize`, `POST /api/v1/emotion/adapt-message`, `POST /api/v1/emotion/personality`, `GET /api/v1/emotion/state` |
+| NeuralMatrix | `POST /api/v1/matrix/agents`, `GET /api/v1/matrix/agents`, `DELETE /api/v1/matrix/agents/{id}`, `POST /api/v1/matrix/tasks/decompose`, `POST /api/v1/matrix/tasks/{id}/execute`, `POST /api/v1/matrix/votes`, `POST /api/v1/matrix/votes/ballot`, `POST /api/v1/matrix/votes/{id}/resolve` |
 
 ## Security
 
