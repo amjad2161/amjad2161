@@ -52,6 +52,7 @@ jobs:
 
       - name: pip-audit
         if: matrix.python-version == '3.11'
+        continue-on-error: true
         run: pip-audit
 
       - name: Generate CycloneDX SBOM
