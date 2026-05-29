@@ -29,7 +29,7 @@ from .observability import Metrics
 from .persistence import Checkpointer, MemoryCheckpointer
 from .policy import PolicyError, PolicyGate
 from .registry import OrganRegistry, build_default_registry
-from .resilience import ResiliencePolicy, default_policies
+from .resilience import ResiliencePolicy
 from .watchdog import Watchdog
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -69,7 +69,13 @@ class Singularity:
         self.policy = policy or PolicyGate()
         self.checkpointer = checkpointer or MemoryCheckpointer()
         self.memory = SessionStore(self.checkpointer)
-        self.resilience = resilience or default_policies([o.id for o in self.registry])
+        self.resilience = resilience or {
+            o.id: ResiliencePolicy(
+                name=o.id,
+                timeout_s=getattr(o, "invoke_timeout_s", None) or self.config.request_timeout_s,
+            )
+            for o in self.registry
+        }
         self._supervise = supervise or self.config.supervise
         self._booted = False
         self._booted_at = 0.0
@@ -315,7 +321,7 @@ class Singularity:
         from .ecosystem import ECOSYSTEM
 
         return {
-            "version": "1.3.0",
+            "version": "1.4.0",
             "organs": [info.as_dict() for info in self.registry.describe_all()],
             "repos": [spec.as_dict() for spec in ECOSYSTEM],
             "intents": self.registry.intents(),

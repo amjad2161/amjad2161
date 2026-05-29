@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "singularity-kernel"
-version = "1.3.0"
+version = "1.4.0"
 description = "SINGULARITY — a hermetic kernel that federates the BRAINIAC/JARVIS ecosystem of repos into one autonomous superintelligence that works together and apart."
 readme = "README.md"
 requires-python = ">=3.10"

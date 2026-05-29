@@ -37,16 +37,17 @@ class NeuroOrgan(BaseOrgan):
     )
 
     async def _attach_real(self) -> None:
-        # Upgrade to the BRAINIAC reasoning core when it is importable.
-        from brainiac.core.neuro_core import NeuroCore  # type: ignore
+        # Real reasoning backends: Mythos' autonomous loop (runs offline with a
+        # stub LLM) and, when present + keyed, BRAINIAC's NeuroCore.
+        from ..kernel.bootstrap import try_import
 
-        self._backend = NeuroCore()
-        self._detail["neuro_core"] = "brainiac"
-
-    async def _on_shutdown(self) -> None:
-        close = getattr(self._backend, "close", None)
-        if close is not None:
-            await close()
+        mythos = try_import("mythos")
+        brainiac = try_import("brainiac")
+        if mythos is None and brainiac is None:
+            raise RuntimeError("no real reasoning backend available")
+        self._backend = {"mythos": mythos, "brainiac": brainiac}
+        self._detail["mythos"] = mythos is not None
+        self._detail["brainiac"] = brainiac is not None
 
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
         if intent == "neuro.think":
@@ -54,10 +55,32 @@ class NeuroOrgan(BaseOrgan):
         if intent == "neuro.plan":
             return self._plan(str(payload.get("goal", "")), int(payload.get("max_tasks", 5)))
         if intent == "neuro.autonomous_run":
-            return self._autonomous(
+            return await self._autonomous_run(
                 str(payload.get("goal", "")), int(payload.get("max_iterations", 3))
             )
         raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _autonomous_run(self, goal: str, max_iterations: int) -> dict[str, Any]:
+        mythos = self._backend.get("mythos") if self._backend else None
+        if mythos is not None:
+            import asyncio
+            import contextlib
+            import io
+            import os
+
+            provider = "anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "stub"
+
+            def _run() -> str:
+                cfg = mythos.MythosConfig(llm_provider=provider,
+                                          max_iterations=max(1, min(max_iterations, 12)))
+                agent = mythos.MythosAgent(config=cfg)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    return agent.run(goal)
+
+            conclusion = await asyncio.to_thread(_run)
+            return {"goal": goal, "conclusion": conclusion, "backend_provider": provider,
+                    "_backend": f"mythos:{provider}", "_usd": 0.0}
+        return self._autonomous(goal, max_iterations)
 
     # -- mock reasoning ---------------------------------------------------
     def _think(self, prompt: str, depth: str) -> dict[str, Any]:
@@ -80,7 +103,8 @@ class NeuroOrgan(BaseOrgan):
             "concepts": keywords,
             "confidence": confidence,
             "depth": depth,
-            "_usd": 0.0,  # mock is free
+            "_usd": 0.0,
+            "_backend": "builtin-reasoner",
         }
 
     def _plan(self, goal: str, max_tasks: int) -> dict[str, Any]:
@@ -95,7 +119,8 @@ class NeuroOrgan(BaseOrgan):
                     "depends_on": [i] if i else [],
                 }
             )
-        return {"goal": goal, "tasks": tasks, "strategy": "decompose-then-execute", "_usd": 0.0}
+        return {"goal": goal, "tasks": tasks, "strategy": "decompose-then-execute",
+                "_usd": 0.0, "_backend": "builtin-reasoner"}
 
     def _autonomous(self, goal: str, max_iterations: int) -> dict[str, Any]:
         max_iterations = max(1, min(max_iterations, 12))
@@ -117,6 +142,7 @@ class NeuroOrgan(BaseOrgan):
             "trace": trace,
             "conclusion": f"Goal '{goal[:60]}' resolved in {len(trace)} iteration(s).",
             "_usd": 0.0,
+            "_backend": "builtin-loop",
         }
 
 

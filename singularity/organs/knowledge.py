@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..kernel.contracts import Capability, Domain
+from ..kernel.contracts import Capability, Domain, Mode
 from .base import BaseOrgan
 
 _MAX_INDEX = 4000  # safety bound on filesystem scans
@@ -66,20 +66,28 @@ class KnowledgeOrgan(BaseOrgan):
             ]
             self._detail.setdefault("indexed", len(self._index))
 
+    @property
+    def _provenance(self) -> str:
+        return "filesystem-scan" if self._mode is Mode.REAL else "builtin-catalog"
+
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
         if intent == "knowledge.skills":
             limit = int(payload.get("limit", 25))
             skills = [a for a in self._index if a.get("kind") == "skill"][:limit]
-            return {"skills": skills, "count": len(skills), "total_indexed": len(self._index)}
+            return {"skills": skills, "count": len(skills), "total_indexed": len(self._index),
+                    "_backend": self._provenance}
         if intent == "knowledge.search":
-            return self._search(str(payload.get("query", "")), int(payload.get("limit", 10)))
+            result = self._search(str(payload.get("query", "")), int(payload.get("limit", 10)))
+            result["_backend"] = self._provenance
+            return result
         if intent == "knowledge.stats":
             kinds: dict[str, int] = {}
             sources: dict[str, int] = {}
             for asset in self._index:
                 kinds[asset.get("kind", "?")] = kinds.get(asset.get("kind", "?"), 0) + 1
                 sources[asset.get("source", "?")] = sources.get(asset.get("source", "?"), 0) + 1
-            return {"total": len(self._index), "by_kind": kinds, "by_source": sources}
+            return {"total": len(self._index), "by_kind": kinds, "by_source": sources,
+                    "_backend": self._provenance}
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _search(self, query: str, limit: int) -> dict[str, Any]:

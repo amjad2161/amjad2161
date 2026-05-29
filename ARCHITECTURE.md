@@ -257,7 +257,39 @@ counters and a live event log. A `/ws` WebSocket mirrors the same nervous-system
 feed full-duplex (agency parity). The whole organism becomes observable in a
 browser with no front-end toolchain.
 
-## 12. Extending the organism
+## 12. Authenticity — genuine backends with honest provenance
+
+A first-class design rule: **no organ may fake its work.** The
+[`bootstrap.py`](singularity/kernel/bootstrap.py) module locates the multi-repo
+checkout and puts each sibling's import path on `sys.path`, so organs import and
+run the *real* upstream code:
+
+* **sky → SkyCore** — `_attach_real` imports `skycore`; `sky.mission_plan` reads
+  real `WaypointMission.steps`, `sky.telemetry` reads a real `SimulatorDrone`
+  telemetry frame, and `sky.fly` executes a genuine (bounded, high-speed) flight
+  whose battery actually drains. (Real flight is real-time, so the sky organ
+  carries a longer `invoke_timeout_s` and the flight is bounded to stay
+  responsive — still the real flight controller, just parameterised.)
+* **agents → agency** — loads the 324-persona `SkillRegistry` and routes via
+  `SupremeJarvisBrain`. Full tool-loop *execution* additionally needs an
+  Anthropic key, which is reported honestly in the result `note`.
+* **neuro → Mythos** — `neuro.autonomous_run` runs the genuine `MythosAgent`
+  loop (offline with Mythos' own stub LLM; real Claude with a key), via
+  `asyncio.to_thread` so the blocking loop never stalls the event loop.
+* **knowledge → filesystem** — indexes the real on-disk skill/agent/prompt
+  corpus (600+ files).
+
+Where an upstream genuinely cannot run in-process (ComfyUI's HTTP server,
+Supabase edge functions, the node proxy, an exchange API), the organ uses a
+deterministic builtin that is itself a *real algorithm* — and says so. **Every
+result includes `_backend`** (e.g. `skycore`, `agency`, `mythos:stub`,
+`filesystem-scan`, `builtin`, `comfyui-workflow`) and `_mode` (`real`/`mock`).
+`singularity doctor` reports which sibling repos import and which organs reached
+REAL; `tests/test_real_integration.py` proves the genuine paths execute (skipping
+cleanly when a repo is absent). The mock-first contract remains — the system
+still boots fully offline — but it never *claims* to be real when it is not.
+
+## 13. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

@@ -23,6 +23,32 @@ makes that one organism real: a 2030-grade orchestration kernel that federates
     & loops   & routing    prompts   embodiment  & risk   creation  & telemetry  proxy
 ```
 
+## Authenticity — real, not "as if"
+
+Every organ runs **genuine code with honest provenance**, never a fake. When the
+sibling repositories are checked out, four organs attach to and execute the
+*actual* upstream code (verified by `singularity doctor` and
+`tests/test_real_integration.py`):
+
+| Organ | Real backend | Proof it is genuine |
+|-------|--------------|---------------------|
+| **sky** | `skycore` (Dji-owner) | Flies a real `SimulatorDrone` — real `WaypointMission`, real physics, battery actually drains; `_backend: "skycore"` |
+| **agents** | `agency` (agency-agents) | Loads the **324 real personas** via `SkillRegistry`, routes through `SupremeJarvisBrain`; `_backend: "agency"` |
+| **neuro** | `mythos` (Mythos) | Runs the genuine `MythosAgent` Reason→Act→Observe loop; `_backend: "mythos:stub"` (or `:anthropic` with a key) |
+| **knowledge** | filesystem | Indexes **600+ real** `SKILL.md`/`agents`/prompt files off disk; `_backend: "filesystem-scan"` |
+
+The remaining organs (**trade, vision, nexus, net**) are deterministic builtins —
+real algorithms (SMA backtester, z-score anomaly detection, valid ComfyUI graphs,
+correct proxy URLs), **honestly labelled** `_backend: "builtin"` — because their
+upstreams require a running server / network / key (ComfyUI `:8188`, Supabase edge
+functions, a node proxy, an exchange API). They upgrade to REAL the instant those
+backends are reachable. **Every result carries a `_backend` field** declaring
+exactly what produced it, and `_mode` (`real`/`mock`) — nothing pretends.
+
+```bash
+python -m singularity doctor   # real_backends: {skycore, agency, mythos, brainiac}; per-organ real/mock
+```
+
 ## The federation at a glance
 
 | Organ | Domain | Federates | Marquee intents |

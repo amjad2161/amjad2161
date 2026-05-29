@@ -110,29 +110,35 @@ def _cmd_doctor(force_mock: bool) -> int:
     import importlib.util
     import platform
 
-    from .organs.base import BaseOrgan
+    from .kernel.bootstrap import available, repos_root
 
     def _has(mod: str) -> bool:
         return importlib.util.find_spec(mod) is not None
 
     async def run(kernel: Singularity) -> Any:
-        return kernel.status()
+        organs = {
+            info.id: {"mode": info.mode.value, "repos": info.repos}
+            for info in kernel.registry.describe_all()
+        }
+        return kernel.status(), organs
 
-    status = asyncio.run(_with_kernel(run, force_mock=force_mock))
-    repos = BaseOrgan.repos_root()
+    # Always probe REAL (ignore --mock) so doctor reports authentic backends.
+    status, organs = asyncio.run(_with_kernel(run, force_mock=False))
+    repos = repos_root()
     report = {
         "python": platform.python_version(),
         "singularity": __version__,
-        "optional_deps": {
-            "fastapi": _has("fastapi"),
-            "uvicorn": _has("uvicorn"),
-            "pydantic": _has("pydantic"),
-        },
+        "optional_deps": {k: _has(k) for k in ("fastapi", "uvicorn", "pydantic")},
         "repos_root": str(repos) if repos else None,
-        "organs": status["organs"],
-        "alive": status["alive"],
-        "real_mode": status["real_mode"],
-        "intents": status["intents"],
+        "real_backends": available(),  # which sibling repos genuinely import
+        "organs": {oid: o["mode"] for oid, o in organs.items()},
+        "summary": {
+            "organs": status["organs"],
+            "alive": status["alive"],
+            "real_mode": status["real_mode"],
+            "mock_mode": status["mock_mode"],
+            "intents": status["intents"],
+        },
         "verdict": "healthy" if status["alive"] == status["organs"] else "degraded",
     }
     _print(report)

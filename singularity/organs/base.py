@@ -33,6 +33,8 @@ class BaseOrgan:
     title: str = "Base Organ"
     vision: str = ""
     capabilities: tuple[Capability, ...] = ()
+    # Optional per-organ invocation timeout (seconds); None → kernel default.
+    invoke_timeout_s: float | None = None
 
     def __init__(self, *, force_mock: bool = False) -> None:
         self._force_mock = force_mock or _env_force_mock()
@@ -92,6 +94,8 @@ class BaseOrgan:
         result = await self._invoke(intent, dict(payload))
         result.setdefault("_organ", self.id)
         result.setdefault("_mode", self._mode.value)
+        # Honest provenance: every result declares what produced it.
+        result.setdefault("_backend", "builtin" if self._backend is None else "real")
         return result
 
     # -- hooks for subclasses --------------------------------------------

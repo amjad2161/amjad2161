@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from .autopilot import Autopilot, AutopilotRun, AutopilotStep
 from .blackboard import Blackboard, append_reducer, merge_reducer
+from .bootstrap import available as real_backends_available
+from .bootstrap import repos_root
 from .config import SingularityConfig
 from .contracts import (
     Capability,
@@ -91,4 +93,6 @@ __all__ = [
     "discover_plugin_organs",
     "load_entrypoint_organs",
     "load_spec_organs",
+    "real_backends_available",
+    "repos_root",
 ]
