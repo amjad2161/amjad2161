@@ -1,0 +1,207 @@
+"""The SINGULARITY kernel — the one organism that binds the organs.
+
+Responsibilities:
+
+* **Lifecycle** — boot/shutdown every organ concurrently, gracefully.
+* **Routing** — turn an ``intent`` into an organ invocation, emitting signals.
+* **Supervision** — run the watchdog so dead organs are resurrected.
+* **Governance** — guard expensive intents through the governor.
+* **Coherence** — a ``pulse`` that orchestrates organs *together* in one cycle.
+
+It is the realisation of "work together and apart": each organ is independently
+usable, yet the kernel composes them into a single continuous intelligence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any, Mapping
+
+from .contracts import Liveness, OrganError, Signal
+from .event_bus import EventBus
+from .governor import Governor, GovernorError
+from .registry import OrganRegistry, build_default_registry
+from .watchdog import Watchdog
+
+# Intents considered "expensive" and therefore guarded by the governor.
+_GUARDED_PREFIXES = ("neuro.", "agents.run", "vision.generate")
+
+
+class Singularity:
+    """The federated kernel over the whole ecosystem."""
+
+    def __init__(
+        self,
+        registry: OrganRegistry | None = None,
+        *,
+        bus: EventBus | None = None,
+        governor: Governor | None = None,
+        supervise: bool = False,
+        watchdog_interval_s: float = 5.0,
+    ) -> None:
+        self.registry = registry or build_default_registry()
+        self.bus = bus or EventBus()
+        self.governor = governor or Governor()
+        self._supervise = supervise
+        self._booted = False
+        self._booted_at = 0.0
+        self.watchdog = Watchdog(
+            organs={o.id: o for o in self.registry},
+            bus=self.bus,
+            interval_s=watchdog_interval_s,
+        )
+
+    # -- lifecycle --------------------------------------------------------
+    async def boot(self) -> dict[str, str]:
+        """Boot every organ concurrently. Returns id -> liveness."""
+
+        await self.bus.emit("kernel.booting", {"organs": len(self.registry)})
+        await asyncio.gather(*(self._boot_one(o) for o in self.registry))
+        if self._supervise:
+            await self.watchdog.start()
+        self._booted = True
+        self._booted_at = time.time()
+        report = {o.id: o.health().liveness.value for o in self.registry}
+        await self.bus.emit("kernel.alive", {"report": report})
+        return report
+
+    async def shutdown(self) -> None:
+        await self.bus.emit("kernel.shutting_down", {})
+        if self._supervise:
+            await self.watchdog.stop()
+        await asyncio.gather(
+            *(self._shutdown_one(o) for o in self.registry), return_exceptions=True
+        )
+        self._booted = False
+        await self.bus.emit("kernel.dormant", {})
+
+    async def __aenter__(self) -> "Singularity":
+        await self.boot()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.shutdown()
+
+    async def _boot_one(self, organ: Any) -> None:
+        try:
+            await organ.boot()
+        except Exception as exc:  # noqa: BLE001 - isolate organ failures
+            await self.bus.emit("organ.boot_failed", {"organ": organ.id, "error": repr(exc)})
+
+    async def _shutdown_one(self, organ: Any) -> None:
+        try:
+            await organ.shutdown()
+        except Exception as exc:  # noqa: BLE001
+            await self.bus.emit("organ.shutdown_failed", {"organ": organ.id, "error": repr(exc)})
+
+    # -- routing ----------------------------------------------------------
+    async def route(self, intent: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """Route a single intent to its owning organ and return the result."""
+
+        if not self._booted:
+            raise OrganError("singularity is not booted")
+        payload = dict(payload or {})
+        organ = self.registry.organ_for_intent(intent)
+
+        if intent.startswith(_GUARDED_PREFIXES):
+            try:
+                self.governor.check(est_usd=float(payload.get("_est_usd", 0.0)))
+            except GovernorError as exc:
+                await self.bus.emit("kernel.throttled", {"intent": intent, "error": str(exc)})
+                raise
+
+        await self.bus.emit("organ.invoke", {"organ": organ.id, "intent": intent}, source="kernel")
+        started = time.perf_counter()
+        result = await organ.invoke(intent, payload)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        if intent.startswith(_GUARDED_PREFIXES):
+            self.governor.record(usd=float(result.get("_usd", 0.0)))
+
+        await self.bus.publish(
+            Signal(
+                topic=f"organ.{organ.id}.result",
+                payload={"intent": intent, "elapsed_ms": round(elapsed_ms, 2)},
+                source=organ.id,
+            )
+        )
+        return result
+
+    async def fanout(
+        self, calls: list[tuple[str, Mapping[str, Any] | None]]
+    ) -> list[dict[str, Any]]:
+        """Route many intents concurrently — organs working in parallel."""
+
+        return list(await asyncio.gather(*(self.route(i, p) for i, p in calls)))
+
+    # -- coherence --------------------------------------------------------
+    async def pulse(self, goal: str) -> dict[str, Any]:
+        """One coherent heartbeat across the organism.
+
+        Demonstrates the organs cooperating: the reasoning core decomposes a
+        goal into a plan, the agency picks an executor persona, the knowledge
+        organ grounds it, and the data plane records telemetry — a single
+        continuous thought spanning the whole federation.
+        """
+
+        if not self._booted:
+            raise OrganError("singularity is not booted")
+        await self.bus.emit("kernel.pulse", {"goal": goal})
+
+        thought = await self.route("neuro.think", {"prompt": goal})
+        plan = await self.route("neuro.plan", {"goal": goal})
+        routing = await self.route("agents.route", {"request": goal})
+        grounding = await self.route("knowledge.search", {"query": goal, "limit": 3})
+        await self.route(
+            "nexus.telemetry",
+            {"sensor": "kernel.pulse", "value": float(len(plan.get("tasks", [])))},
+        )
+
+        return {
+            "goal": goal,
+            "thought": thought,
+            "plan": plan,
+            "chosen_agent": routing,
+            "grounding": grounding,
+            "organs_engaged": ["neuro", "agents", "knowledge", "nexus"],
+        }
+
+    # -- introspection ----------------------------------------------------
+    def status(self) -> dict[str, Any]:
+        health = [o.health().as_dict() for o in self.registry]
+        alive = sum(1 for h in health if h["ok"])
+        real = sum(1 for h in health if h["mode"] == "real")
+        return {
+            "booted": self._booted,
+            "uptime_s": round(time.time() - self._booted_at, 1) if self._booted else 0.0,
+            "organs": len(self.registry),
+            "alive": alive,
+            "real_mode": real,
+            "mock_mode": len(self.registry) - real,
+            "intents": len(self.registry.intents()),
+            "events_published": self.bus.total_published,
+            "events_delivered": self.bus.total_delivered,
+            "governor": self.governor.stats(),
+            "health": health,
+        }
+
+    def manifest(self) -> dict[str, Any]:
+        from .ecosystem import ECOSYSTEM
+
+        return {
+            "version": "1.0.0",
+            "organs": [info.as_dict() for info in self.registry.describe_all()],
+            "repos": [spec.as_dict() for spec in ECOSYSTEM],
+            "intents": self.registry.intents(),
+        }
+
+    @property
+    def booted(self) -> bool:
+        return self._booted
+
+
+def build_default_kernel(*, force_mock: bool = False, supervise: bool = False) -> Singularity:
+    """Build a kernel with the canonical 8-organ federation."""
+
+    return Singularity(build_default_registry(force_mock=force_mock), supervise=supervise)

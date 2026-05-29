@@ -1,0 +1,132 @@
+"""NEURO — the reasoning core.
+
+Federates: amjad2161/brainiac ``NeuroCore``, Mythos' autonomous loop, SuperAGI,
+the Anthropic SDK + quickstarts. In ``REAL`` mode it delegates to
+``brainiac.core.neuro_core.NeuroCore`` (and, given ``ANTHROPIC_API_KEY``, real
+Claude calls). In ``MOCK`` mode it produces a deterministic, inspectable
+reasoning trace so downstream organs always have something to act on.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from typing import Any
+
+from ..kernel.contracts import Capability, Domain
+from .base import BaseOrgan
+
+_STOPWORDS = {
+    "the", "a", "an", "to", "of", "and", "or", "for", "with", "in", "on", "is",
+    "are", "be", "this", "that", "it", "as", "by", "at", "from",
+}
+
+
+class NeuroOrgan(BaseOrgan):
+    id = "neuro"
+    domain = Domain.REASONING
+    title = "NeuroCore — reasoning & autonomy"
+    vision = "Decompose any goal into grounded thought, plans and self-directed loops."
+    capabilities = (
+        Capability("neuro.think", "Reason about a prompt and return a structured thought.",
+                   {"prompt": "str", "depth": "str?"}),
+        Capability("neuro.plan", "Decompose a goal into an ordered task list.",
+                   {"goal": "str", "max_tasks": "int?"}),
+        Capability("neuro.autonomous_run", "Run a bounded Reason→Act→Observe loop.",
+                   {"goal": "str", "max_iterations": "int?"}),
+    )
+
+    async def _attach_real(self) -> None:
+        # Upgrade to the BRAINIAC reasoning core when it is importable.
+        from brainiac.core.neuro_core import NeuroCore  # type: ignore
+
+        self._backend = NeuroCore()
+        self._detail["neuro_core"] = "brainiac"
+
+    async def _on_shutdown(self) -> None:
+        close = getattr(self._backend, "close", None)
+        if close is not None:
+            await close()
+
+    async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if intent == "neuro.think":
+            return self._think(str(payload.get("prompt", "")), str(payload.get("depth", "standard")))
+        if intent == "neuro.plan":
+            return self._plan(str(payload.get("goal", "")), int(payload.get("max_tasks", 5)))
+        if intent == "neuro.autonomous_run":
+            return self._autonomous(
+                str(payload.get("goal", "")), int(payload.get("max_iterations", 3))
+            )
+        raise AssertionError("unreachable")  # pragma: no cover
+
+    # -- mock reasoning ---------------------------------------------------
+    def _think(self, prompt: str, depth: str) -> dict[str, Any]:
+        keywords = _keywords(prompt)
+        steps = [
+            f"Frame the request: '{prompt[:80]}'",
+            f"Identify salient concepts: {', '.join(keywords) or 'general'}",
+            "Relate concepts to known capabilities of the federation",
+            "Synthesise a grounded response",
+        ]
+        if depth in ("deep", "supreme"):
+            steps.append("Self-critique the synthesis and refine")
+        confidence = round(0.55 + min(len(keywords), 8) * 0.05, 2)
+        return {
+            "thought": (
+                f"Considering '{prompt[:120]}', the core reasons across "
+                f"{len(keywords)} concept(s) and proposes a {depth} response."
+            ),
+            "reasoning_steps": steps,
+            "concepts": keywords,
+            "confidence": confidence,
+            "depth": depth,
+            "_usd": 0.0,  # mock is free
+        }
+
+    def _plan(self, goal: str, max_tasks: int) -> dict[str, Any]:
+        keywords = _keywords(goal) or ["objective"]
+        verbs = ["analyse", "design", "build", "verify", "deliver"]
+        tasks = []
+        for i, kw in enumerate(keywords[:max_tasks]):
+            tasks.append(
+                {
+                    "id": i + 1,
+                    "title": f"{verbs[i % len(verbs)].capitalize()} {kw}",
+                    "depends_on": [i] if i else [],
+                }
+            )
+        return {"goal": goal, "tasks": tasks, "strategy": "decompose-then-execute", "_usd": 0.0}
+
+    def _autonomous(self, goal: str, max_iterations: int) -> dict[str, Any]:
+        max_iterations = max(1, min(max_iterations, 12))
+        trace = []
+        for i in range(max_iterations):
+            seed = hashlib.sha256(f"{goal}:{i}".encode()).hexdigest()
+            done = i == max_iterations - 1
+            trace.append(
+                {
+                    "iteration": i + 1,
+                    "reason": f"Assess progress toward: {goal[:60]}",
+                    "act": "finish" if done else f"sub-step-{seed[:6]}",
+                    "observe": "goal satisfied" if done else "partial progress",
+                }
+            )
+        return {
+            "goal": goal,
+            "iterations": len(trace),
+            "trace": trace,
+            "conclusion": f"Goal '{goal[:60]}' resolved in {len(trace)} iteration(s).",
+            "_usd": 0.0,
+        }
+
+
+def _keywords(text: str, limit: int = 8) -> list[str]:
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", text.lower())
+    seen: list[str] = []
+    for token in tokens:
+        if token in _STOPWORDS or token in seen:
+            continue
+        seen.append(token)
+        if len(seen) >= limit:
+            break
+    return seen
