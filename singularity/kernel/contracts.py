@@ -35,6 +35,7 @@ class Domain(str, Enum):
     PERCEPTION = "perception"
     DATAPLANE = "dataplane"
     NETWORK = "network"
+    ACTUATION = "actuation"  # digital embodiment: browser/GUI/device control
 
 
 class Liveness(str, Enum):

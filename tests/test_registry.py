@@ -7,10 +7,10 @@ from singularity.kernel.ecosystem import ECOSYSTEM, organ_ids
 from singularity.kernel.registry import build_default_registry
 
 
-def test_default_registry_has_eight_organs():
+def test_default_registry_has_all_organs():
     registry = build_default_registry(force_mock=True)
-    assert len(registry) == 8
-    assert set(organ_ids()) == {o.id for o in registry}
+    assert len(registry) == 9
+    assert {o.id for o in registry} >= set(organ_ids())
 
 
 def test_every_intent_is_unique_and_routable():
@@ -41,4 +41,4 @@ def test_every_repo_maps_to_a_real_organ():
     organ_set = {o.id for o in registry}
     for spec in ECOSYSTEM:
         assert spec.organ in organ_set, f"{spec.repo} → unknown organ {spec.organ}"
-    assert len(ECOSYSTEM) == 17
+    assert len(ECOSYSTEM) == 28

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .agents import AgentsOrgan
 from .base import BaseOrgan
+from .control import ControlOrgan
 from .knowledge import KnowledgeOrgan
 from .net import NetOrgan
 from .neuro import NeuroOrgan
@@ -28,4 +29,5 @@ __all__ = [
     "VisionOrgan",
     "NexusOrgan",
     "NetOrgan",
+    "ControlOrgan",
 ]

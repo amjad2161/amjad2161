@@ -34,6 +34,8 @@ class NeuroOrgan(BaseOrgan):
                    {"goal": "str", "max_tasks": "int?"}),
         Capability("neuro.autonomous_run", "Run a bounded Reason→Act→Observe loop.",
                    {"goal": "str", "max_iterations": "int?"}),
+        Capability("neuro.humanize", "Strip common AI-writing tells from text (humanizer).",
+                   {"text": "str"}),
     )
 
     async def _attach_real(self) -> None:
@@ -58,7 +60,39 @@ class NeuroOrgan(BaseOrgan):
             return await self._autonomous_run(
                 str(payload.get("goal", "")), int(payload.get("max_iterations", 3))
             )
+        if intent == "neuro.humanize":
+            return self._humanize(str(payload.get("text", "")))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _humanize(self, text: str) -> dict[str, Any]:
+        original = text
+        edits = 0
+        # Common AI tells → plainer language (deterministic, real transform).
+        replacements = {
+            r"\bdelve into\b": "look at",
+            r"\bdelve\b": "dig",
+            r"\bIn conclusion,?\s*": "",
+            r"\bIt's worth noting that\s*": "",
+            r"\bIt is important to note that\s*": "",
+            r"\bfurthermore\b": "also",
+            r"\bmoreover\b": "and",
+            r"\bleverage\b": "use",
+            r"\butilize\b": "use",
+            r"\bin order to\b": "to",
+            r"\ba plethora of\b": "many",
+            r"\bseamless(ly)?\b": "smooth",
+            r"\bunlock\b": "enable",
+            r"\btapestry\b": "mix",
+        }
+        for pat, repl in replacements.items():
+            text, k = re.subn(pat, repl, text, flags=re.IGNORECASE)
+            edits += k
+        # Collapse em-dash overuse and triple emphasis.
+        text, k = re.subn(r"\s*—\s*", ", ", text)
+        edits += k
+        text = re.sub(r"\s{2,}", " ", text).strip()
+        return {"original": original, "humanized": text, "edits": edits,
+                "_backend": "builtin-humanizer", "_usd": 0.0}
 
     async def _autonomous_run(self, goal: str, max_iterations: int) -> dict[str, Any]:
         mythos = self._backend.get("mythos") if self._backend else None

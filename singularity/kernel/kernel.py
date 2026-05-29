@@ -344,7 +344,7 @@ class Singularity:
         from .ecosystem import ECOSYSTEM
 
         return {
-            "version": "1.5.0",
+            "version": "1.6.0",
             "organs": [info.as_dict() for info in self.registry.describe_all()],
             "repos": [spec.as_dict() for spec in ECOSYSTEM],
             "intents": self.registry.intents(),

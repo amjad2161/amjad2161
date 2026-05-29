@@ -18,8 +18,7 @@ def test_mount_external_mcp_loopback():
         bridge_a = a.mcp_bridge()
         organ = await b.mount_mcp("alpha", InProcessTransport(bridge_a.handle))
 
-        intents = b.registry.intents()
-        ext = [i for i in intents if i.startswith("ext.alpha.")]
+        ext = [i for i in b.registry.intents() if i.startswith("ext.alpha.")]
         # Route an external tool through B → executes on A.
         result = await b.route("ext.alpha.trade-signal", {"symbol": "ETH_USDT"})
 
@@ -29,7 +28,7 @@ def test_mount_external_mcp_loopback():
 
     organ, ext, result = asyncio.run(run())
     assert organ.id == "ext-alpha"
-    assert len(ext) == 24  # all of A's intents are now federated into B
+    assert len(ext) == 30  # all of A's intents are now federated into B
     assert result["server"] == "alpha"
     assert result["tool"] == "trade-signal"
     assert result["result"]["structuredContent"]["signal"] in ("BUY", "SELL", "HOLD")
@@ -47,7 +46,7 @@ def test_mcp_client_list_and_call_via_inprocess():
         return tools, called
 
     tools, called = asyncio.run(run())
-    assert len(tools) == 24
+    assert len(tools) == 30
     assert called["isError"] is False
     assert called["structuredContent"]["count"] == 4
 

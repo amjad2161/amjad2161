@@ -46,7 +46,7 @@ from .kernel.registry import OrganRegistry, build_default_registry
 from .kernel.scheduler import Scheduler
 from .kernel.workflow import Workflow, WorkflowResult
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __all__ = [
     "__version__",
     "Singularity",

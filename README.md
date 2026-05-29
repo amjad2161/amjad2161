@@ -111,6 +111,23 @@ async with build_default_kernel() as kernel:
     print(run.organs_engaged, run.conclusion)
 ```
 
+## Frontier expansion (v1.6) — the CONTROL lobe + real media
+
+Integrating a curated set of 2026 frontier projects (UI-TARS-desktop, auto-browser,
+docker-android, localsend, Decepticon, paper2code, humanizer, ace-step, supersplat…
+— see [docs/LINK_ANALYSIS.md](docs/LINK_ANALYSIS.md) for the honest per-source map):
+
+| Addition | Federates | What it does |
+|----------|-----------|--------------|
+| **CONTROL organ** (`organs/control.py`) | UI-TARS · auto-browser · docker-android · localsend | `control.browse` (a **real** HTTP GET — verified live), `control.plan_actions` (UI-TARS-style action trace), `control.transfer` (localsend P2P spec) |
+| **`vision.audio`** | ace-step-ui | Synthesizes a **real, playable WAV** (16-bit PCM melody) |
+| **`vision.splat`** | supersplat | 3D Gaussian-splat scene spec |
+| **`neuro.humanize`** | humanizer | **Real** transform stripping AI-writing tells |
+
+The federation now spans **28 repositories → 9 organs → 30 intents**. Frontier
+repos are recorded in `ecosystem.py` and federated by concept/adapter; they
+upgrade to live backends when reachable, with `_backend` provenance on every result.
+
 ## Federation & realism (v1.5)
 
 | Layer | Module | What it adds |

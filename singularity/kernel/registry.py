@@ -82,6 +82,7 @@ def build_default_registry(
     """
 
     from ..organs.agents import AgentsOrgan
+    from ..organs.control import ControlOrgan
     from ..organs.knowledge import KnowledgeOrgan
     from ..organs.net import NetOrgan
     from ..organs.neuro import NeuroOrgan
@@ -99,6 +100,7 @@ def build_default_registry(
         VisionOrgan,
         NexusOrgan,
         NetOrgan,
+        ControlOrgan,
     )
     registry = OrganRegistry(cls(force_mock=force_mock) for cls in organ_types)
     if include_plugins:

@@ -32,6 +32,10 @@ class VisionOrgan(BaseOrgan):
                    {"width": "int?", "height": "int?", "format": "str?"}),
         Capability("vision.creative", "Produce a real PNG image + SVG badge for a label.",
                    {"text": "str", "color": "str?", "size": "int?"}),
+        Capability("vision.audio", "Synthesize a real WAV melody from a prompt (ACE-Step style).",
+                   {"prompt": "str", "seconds": "float?"}),
+        Capability("vision.splat", "Generate a 3D Gaussian-splat scene spec (SuperSplat style).",
+                   {"prompt": "str", "count": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -61,7 +65,49 @@ class VisionOrgan(BaseOrgan):
         if intent == "vision.creative":
             return self._creative(str(payload.get("text", "SINGULARITY")), payload.get("color"),
                                   int(payload.get("size", 96)))
+        if intent == "vision.audio":
+            return self._audio(str(payload.get("prompt", "singularity")),
+                               float(payload.get("seconds", 1.5)))
+        if intent == "vision.splat":
+            return self._splat(str(payload.get("prompt", "nebula")), int(payload.get("count", 24)))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _audio(self, prompt: str, seconds: float) -> dict[str, Any]:
+        seconds = max(0.25, min(seconds, 8.0))
+        rate = 16000
+        digest = hashlib.sha256(prompt.encode()).digest()
+        # A short procedural melody — a real, playable WAV (no deps).
+        scale = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25]  # C major pentatonish
+        n = int(rate * seconds)
+        frames = bytearray()
+        notes = max(1, int(seconds * 4))
+        for i in range(n):
+            note = scale[digest[(i * notes // n) % len(digest)] % len(scale)]
+            t = i / rate
+            env = min(1.0, 8 * (1 - (i % (n // notes)) / (n // notes)))  # simple decay
+            sample = int(0.3 * env * 32767 * math.sin(2 * math.pi * note * t))
+            frames += struct.pack("<h", max(-32768, min(32767, sample)))
+        wav = _encode_wav(bytes(frames), rate)
+        return {"prompt": prompt, "seconds": round(seconds, 2), "sample_rate": rate,
+                "wav_base64": base64.b64encode(wav).decode(), "wav_bytes": len(wav),
+                "_backend": "builtin-wav"}
+
+    def _splat(self, prompt: str, count: int) -> dict[str, Any]:
+        count = max(1, min(count, 512))
+        digest = hashlib.sha256(prompt.encode()).digest()
+        splats = []
+        for i in range(count):
+            d = digest[i % len(digest)]
+            ang = 2 * math.pi * i / count
+            r = 1.0 + (d / 255)
+            splats.append({
+                "p": [round(r * math.cos(ang), 3), round((d - 128) / 128, 3),
+                      round(r * math.sin(ang), 3)],
+                "scale": round(0.02 + (d % 16) / 200, 3),
+                "rgba": [d, (d * 3) & 255, (d * 7) & 255, 255],
+            })
+        return {"prompt": prompt, "format": "gaussian-splat", "count": len(splats),
+                "splats": splats, "_backend": "builtin-splat"}
 
     def _generate(self, payload: dict[str, Any]) -> dict[str, Any]:
         prompt = str(payload.get("prompt", "a luminous neural galaxy"))
@@ -133,6 +179,17 @@ def _render_png(seed_text: str, size: int) -> bytes:
             bl = int(127 + 127 * math.sin(((u + v) * (1 + b * 4)) * math.pi))
             pixels += bytes(((r ^ fr) & 255, (g ^ fg) & 255, (bl ^ fb) & 255))
     return _encode_png(size, size, bytes(pixels))
+
+
+def _encode_wav(frames: bytes, rate: int) -> bytes:
+    """Minimal 16-bit mono PCM WAV encoder (dependency-free)."""
+
+    data_len = len(frames)
+    return (
+        b"RIFF" + struct.pack("<I", 36 + data_len) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate * 2, 2, 16)
+        + b"data" + struct.pack("<I", data_len) + frames
+    )
 
 
 def _encode_png(width: int, height: int, rgb: bytes) -> bytes:

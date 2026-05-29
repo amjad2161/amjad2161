@@ -313,7 +313,27 @@ a tool across the seam, proving the integration is real.
 * **memory.recall** upgraded from keyword counting to **TF-IDF cosine** retrieval
   so distinctive terms outrank common ones.
 
-## 14. Extending the organism
+## 14. Frontier expansion (v1.6) — the CONTROL lobe
+
+A curated set of 2026 frontier projects (surfaced as links) were studied and
+integrated; the honest per-source map is in [docs/LINK_ANALYSIS.md](docs/LINK_ANALYSIS.md).
+
+* A new **ACTUATION** domain and **`control`** organ
+  ([`organs/control.py`](singularity/organs/control.py)) give the organism digital
+  hands: `control.browse` performs a **genuine** stdlib HTTP GET (verified live —
+  200 + real page title), `control.plan_actions` produces a UI-TARS-style action
+  trace (navigate/click/type/scroll/extract/verify), and `control.transfer` emits
+  a localsend-v2 P2P session spec.
+* **`vision.audio`** emits a real, playable 16-bit PCM **WAV** (ACE-Step theme);
+  **`vision.splat`** emits a 3D Gaussian-splat scene spec (SuperSplat theme).
+* **`neuro.humanize`** is a real deterministic transform that strips common
+  AI-writing tells (humanizer theme).
+* `ecosystem.py` now records **28 repositories → 9 organs → 30 intents**; the
+  frontier repos are federated by concept/adapter (`Integration.EXTERNAL`) and
+  upgrade to live backends when reachable. Honesty is preserved: Instagram sources
+  were login-walled (only captions readable) and were used for direction, not faked.
+
+## 15. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

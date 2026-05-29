@@ -18,11 +18,11 @@ def test_boot_status_and_shutdown():
         return report, status
 
     report, status = asyncio.run(run())
-    assert len(report) == 8
-    assert status["organs"] == 8
-    assert status["alive"] == 8
-    assert status["intents"] >= 16
-    assert status["mock_mode"] == 8
+    assert len(report) == 9
+    assert status["organs"] == 9
+    assert status["alive"] == 9
+    assert status["intents"] >= 30
+    assert status["mock_mode"] == 9
 
 
 def test_route_requires_boot():
