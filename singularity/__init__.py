@@ -22,6 +22,7 @@ Public surface::
 
 from __future__ import annotations
 
+from .kernel.blackboard import Blackboard
 from .kernel.contracts import (
     Capability,
     Domain,
@@ -35,9 +36,11 @@ from .kernel.contracts import (
 )
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
+from .kernel.mcp import MCPBridge
 from .kernel.registry import OrganRegistry, build_default_registry
+from .kernel.workflow import Workflow, WorkflowResult
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = [
     "__version__",
     "Singularity",
@@ -45,6 +48,10 @@ __all__ = [
     "OrganRegistry",
     "build_default_registry",
     "EventBus",
+    "Workflow",
+    "WorkflowResult",
+    "MCPBridge",
+    "Blackboard",
     "Organ",
     "OrganInfo",
     "OrganError",

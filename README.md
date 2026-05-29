@@ -40,6 +40,43 @@ The full mapping (all 17 repos, languages, entrypoints, integration modes) is in
 **[INTEGRATION_MAP.md](INTEGRATION_MAP.md)**; the design rationale is in
 **[ARCHITECTURE.md](ARCHITECTURE.md)**.
 
+## Upgrade layers (v1.1) — best-in-class OSS patterns, re-implemented
+
+Beyond the organ federation, the kernel adopts (and re-implements, dependency-free)
+the strongest patterns from across the open-source ecosystem so the organism is
+reliable, composable, observable and interoperable:
+
+| Layer | Module | Inspired by | What it adds |
+|-------|--------|-------------|--------------|
+| **Resilience** | `kernel/resilience.py` | [resilience4j](https://github.com/resilience4j/resilience4j) | Retry · CircuitBreaker (CLOSED/OPEN/HALF_OPEN) · Bulkhead · TimeLimiter wrapping every organ call |
+| **Workflow DAG** | `kernel/workflow.py` | [LangGraph](https://github.com/langchain-ai/langgraph) | Declarative graph of intents over shared state — topological layers run in parallel, with conditional steps |
+| **Blackboard** | `kernel/blackboard.py` | blackboard architecture + LangGraph reducers | Async-safe shared working memory with `append`/`merge` reducers and change history |
+| **MCP surface** | `kernel/mcp.py` | [Model Context Protocol](https://modelcontextprotocol.io) | Exposes all 24 intents as MCP tools (`tools/list` + `tools/call`, JSON-RPC 2.0) — the singularity *is* a tool any agent can call |
+| **Observability** | `kernel/observability.py` | Prometheus client model | Counters / gauges / histograms with labels, Prometheus text exposition |
+
+```bash
+python -m singularity workflow "survey a vineyard then hedge the harvest"  # run a DAG
+python -m singularity mcp        # dump the MCP tools/list catalogue (24 tools)
+python -m singularity metrics    # Prometheus exposition after a warm-up pulse
+```
+
+Compose an orchestration graph in code:
+
+```python
+from singularity import build_default_kernel, Workflow
+
+wf = (Workflow("survey-and-hedge")
+      .add_step("plan", "neuro.plan", {"goal": "survey + hedge"})
+      .add_step("mission", "sky.mission_plan", {"lat": 38.5, "lon": -122.4, "points": 8},
+                depends_on=["plan"])
+      .add_step("fly", "sky.fly", lambda ctx: {"waypoints": ctx["mission"]["waypoints"]},
+                depends_on=["mission"])
+      .add_step("hedge", "trade.backtest", {"symbol": "BTC_USDT"}, depends_on=["plan"]))
+
+async with build_default_kernel() as kernel:
+    result = await kernel.run_workflow(wf)   # plan ∥ —, then mission ∥ hedge, then fly
+```
+
 ## Why this is "singular and continuous"
 
 * **One contract.** Every organ — Python library, HTTP service, on-disk asset
@@ -93,7 +130,8 @@ asyncio.run(main())
 ```bash
 pip install -e '.[api]'
 python -m singularity serve --port 8088
-# GET /health  /manifest  /organs  /intents     POST /route  /pulse
+# GET  /health  /manifest  /organs  /intents  /metrics  /blackboard
+# POST /route  /pulse  /mcp   (/mcp speaks MCP JSON-RPC: tools/list, tools/call)
 ```
 
 ## Layout
@@ -107,13 +145,18 @@ singularity/
 │   ├── registry.py      # intent → organ routing table
 │   ├── governor.py      # cost/rate circuit breaker
 │   ├── watchdog.py      # health supervision + backoff resurrection
-│   └── kernel.py        # Singularity: boot/route/fanout/pulse/status
+│   ├── resilience.py    # retry · circuit breaker · bulkhead · time limiter
+│   ├── workflow.py      # DAG orchestration engine over intents
+│   ├── blackboard.py    # shared working memory (reducers + history)
+│   ├── observability.py # metrics registry + Prometheus exposition
+│   ├── mcp.py           # MCP tools/list + tools/call bridge
+│   └── kernel.py        # Singularity: boot/route/fanout/pulse/run_workflow/status
 ├── organs/              # 8 mock-first adapters onto the universal contract
 │   ├── base.py  neuro.py  agents.py  knowledge.py
 │   └── sky.py   trade.py  vision.py  nexus.py  net.py
-├── api/main.py          # optional FastAPI gateway
+├── api/main.py          # optional FastAPI gateway (+ /metrics /mcp /blackboard)
 └── cli.py               # `singularity` command line
-tests/                   # 40 tests, stdlib-only (no async plugin required)
+tests/                   # 62 tests, stdlib-only (no async plugin required)
 ```
 
 ## Testing

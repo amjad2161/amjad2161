@@ -51,6 +51,36 @@ async def _cmd_intents(kernel: Singularity) -> Any:
     return kernel.registry.intents()
 
 
+async def _cmd_mcp(kernel: Singularity) -> Any:
+    return {"tools": kernel.mcp_bridge().list_tools()}
+
+
+def _demo_workflow():
+    from .kernel.workflow import Workflow
+
+    return (
+        Workflow("survey-and-hedge")
+        .add_step("plan", "neuro.plan", {"goal": "survey a vineyard then hedge the harvest"})
+        .add_step("route", "agents.route", {"request": "design a drone survey + trading dashboard"})
+        .add_step(
+            "mission",
+            "sky.mission_plan",
+            {"kind": "survey", "lat": 38.5, "lon": -122.4, "points": 8},
+            depends_on=["plan"],
+        )
+        .add_step("fly", "sky.fly", lambda c: {"waypoints": c["mission"]["waypoints"]},
+                  depends_on=["mission"])
+        .add_step("hedge", "trade.backtest", {"symbol": "BTC_USDT", "fast": 3, "slow": 8},
+                  depends_on=["plan"])
+        .add_step(
+            "telemetry",
+            "nexus.telemetry",
+            lambda c: {"sensor": "harvest.value", "value": float(c["hedge"]["final_equity"])},
+            depends_on=["hedge"],
+        )
+    )
+
+
 def _cmd_route(intent: str, payload: dict[str, Any], force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
         return await kernel.route(intent, payload)
@@ -62,6 +92,25 @@ def _cmd_route(intent: str, payload: dict[str, Any], force_mock: bool) -> int:
 def _cmd_pulse(goal: str, force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
         return await kernel.pulse(goal)
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
+def _cmd_metrics(force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        await kernel.pulse("warm up the metrics")
+        await kernel.fanout([("trade.status", {}), ("sky.telemetry", {}), ("agents.list", {})])
+        return kernel.metrics.render_prometheus()
+
+    print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
+def _cmd_workflow(goal: str | None, force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        result = await kernel.run_workflow(_demo_workflow(), {"goal": goal or "coherent organism"})
+        return result.as_dict()
 
     _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
     return 0
@@ -84,16 +133,29 @@ def _cmd_demo(force_mock: bool) -> int:
             result = await kernel.route(intent, payload)
             steps.append({"intent": intent, "result": result})
         pulse = await kernel.pulse("Become a coherent autonomous organism")
-        return {"status": kernel.status(), "showcase": steps, "pulse": pulse}
+        workflow = await kernel.run_workflow(_demo_workflow(), {"goal": "survey-and-hedge"})
+        tools = kernel.mcp_bridge().list_tools()
+        return {
+            "status": kernel.status(),
+            "showcase": steps,
+            "pulse": pulse,
+            "workflow": workflow.as_dict(),
+            "mcp_tools": len(tools),
+        }
 
     result = asyncio.run(_with_kernel(run, force_mock=force_mock))
     status = result["status"]
+    wf = result["workflow"]
     print(f"\n  SINGULARITY v{__version__} — {status['organs']} organs, "
           f"{status['intents']} intents, {status['alive']} alive "
           f"({status['real_mode']} real / {status['mock_mode']} mock)\n")
     for step in result["showcase"]:
         print(f"  → {step['intent']}")
     print("\n  pulse engaged organs:", ", ".join(result["pulse"]["organs_engaged"]))
+    print(f"  workflow '{wf['name']}' layers: {wf['layers']}")
+    print(f"  workflow engaged organs: {', '.join(wf['organs_engaged'])} "
+          f"in {wf['elapsed_ms']}ms")
+    print(f"  MCP tools exposed: {result['mcp_tools']}")
     print("  events published:", status["events_published"], "\n")
     return 0
 
@@ -123,7 +185,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("organs", help="describe every organ")
     sub.add_parser("manifest", help="dump the full federation manifest")
     sub.add_parser("intents", help="list routable intents")
+    sub.add_parser("mcp", help="dump the MCP tools/list catalogue")
+    sub.add_parser("metrics", help="warm up and print Prometheus metrics")
     sub.add_parser("demo", help="narrated showcase of the organism")
+
+    p_workflow = sub.add_parser("workflow", help="run the demo survey-and-hedge DAG")
+    p_workflow.add_argument("goal", nargs="?", default=None)
 
     p_route = sub.add_parser("route", help="route one intent")
     p_route.add_argument("intent")
@@ -154,6 +221,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "intents":
         _print(asyncio.run(_with_kernel(_cmd_intents, force_mock=force_mock)))
         return 0
+    if args.command == "mcp":
+        _print(asyncio.run(_with_kernel(_cmd_mcp, force_mock=force_mock)))
+        return 0
+    if args.command == "metrics":
+        return _cmd_metrics(force_mock)
+    if args.command == "workflow":
+        return _cmd_workflow(args.goal, force_mock)
     if args.command == "route":
         try:
             payload = json.loads(args.payload)

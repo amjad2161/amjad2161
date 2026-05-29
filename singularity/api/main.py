@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..kernel.contracts import OrganError
@@ -74,5 +74,20 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
     @app.post("/pulse")
     async def pulse(req: PulseRequest) -> dict[str, Any]:
         return await kernel.pulse(req.goal)
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(content=kernel.metrics.render_prometheus(), media_type="text/plain")
+
+    @app.get("/blackboard")
+    async def blackboard() -> dict[str, Any]:
+        return {"keys": kernel.blackboard.keys(), "snapshot": kernel.blackboard.snapshot()}
+
+    @app.post("/mcp")
+    async def mcp(request: Request) -> dict[str, Any]:
+        """MCP JSON-RPC 2.0 endpoint: tools/list and tools/call."""
+
+        payload = await request.json()
+        return await kernel.mcp_bridge().handle(payload)
 
     return app

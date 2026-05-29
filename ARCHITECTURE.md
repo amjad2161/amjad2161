@@ -123,7 +123,65 @@ maps to a live organ and that the count stays at 17.
   configured, 40 stdlib-only tests covering contracts, bus, registry, governor,
   watchdog, every organ and the kernel.
 
-## 9. Extending the organism
+## 9. Upgrade layers — adopting the best of the OSS ecosystem
+
+The kernel deliberately mines proven open-source patterns and re-implements them
+dependency-free, so the organism is not just connected but *production-grade*.
+
+### 9.1 Resilience ([`resilience.py`](singularity/kernel/resilience.py))
+
+A compact async adaptation of **resilience4j**. Every organ call is wrapped in a
+`ResiliencePolicy` composing — in resilience4j's canonical order —
+**Retry → CircuitBreaker → Bulkhead → TimeLimiter**:
+
+* **CircuitBreaker** is a CLOSED → OPEN → HALF_OPEN state machine that fails fast
+  once an organ's failure threshold is crossed, then probes recovery.
+* **Retry** re-attempts transient failures with exponential backoff + jitter.
+* **Bulkhead** caps concurrency per organ (semaphore) to prevent resource
+  monopolisation.
+* **TimeLimiter** bounds slow calls via `asyncio.wait_for`.
+
+Because every organ is mock-first and healthy by default, these guards are
+invisible in normal operation — they exist for the day a real LLM, exchange,
+drone or image server misbehaves. Circuit state is surfaced in `kernel.status()`.
+
+### 9.2 Workflow DAG ([`workflow.py`](singularity/kernel/workflow.py))
+
+Adapted from **LangGraph**'s state-graph model. A `Workflow` is a set of steps
+(nodes) wired by dependencies (edges) over a shared context (state). A Kahn
+topological sort yields parallelizable **layers**; independent steps in a layer
+run concurrently (`asyncio.gather`), a step's payload may be a function of the
+accumulated context, and a step may be gated by a `when` condition (conditional
+edges). Cycles and missing dependencies are rejected at plan time. This is the
+richest expression of "work together": one declarative graph threads a goal
+across many organs with real parallelism.
+
+### 9.3 Blackboard ([`blackboard.py`](singularity/kernel/blackboard.py))
+
+The classic **blackboard architecture** (organs as knowledge sources sharing
+state) fused with LangGraph's **reducers** (`Annotated[list, add]`). An
+async-safe key-value store with pluggable per-key reducers (`append`, `merge`,
+last-write-wins) and full change history. The workflow engine writes every step
+result here, giving long-running tasks a coherent shared memory.
+
+### 9.4 MCP surface ([`mcp.py`](singularity/kernel/mcp.py))
+
+The keystone of interoperability. `MCPBridge` projects all 24 intents as
+**Model Context Protocol** tools, generating JSON-Schema `inputSchema` from each
+capability's declared payload, and speaks JSON-RPC 2.0 `tools/list` / `tools/call`.
+This closes the loop with the ecosystem it came from: the singularity does not
+merely *use* agents — it *is* a tool that Claude, Cursor, Claude Code or the
+agency's own personas can call, over the same protocol the knowledge organ indexes.
+
+### 9.5 Observability ([`observability.py`](singularity/kernel/observability.py))
+
+A Prometheus-client-style `Metrics` registry (counters, gauges, labelled
+histograms) rendered in the Prometheus text exposition format — echoing
+BRAINIAC's `prometheus_metrics()`. The kernel records per-intent route counts,
+per-organ latency histograms and error counts; exposed at `/metrics` and via
+`singularity metrics`.
+
+## 10. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

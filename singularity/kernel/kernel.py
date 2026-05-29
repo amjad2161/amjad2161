@@ -16,13 +16,20 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
+from .blackboard import Blackboard
 from .contracts import Liveness, OrganError, Signal
 from .event_bus import EventBus
 from .governor import Governor, GovernorError
+from .observability import Metrics
 from .registry import OrganRegistry, build_default_registry
+from .resilience import ResiliencePolicy, default_policies
 from .watchdog import Watchdog
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .mcp import MCPBridge
+    from .workflow import Workflow, WorkflowResult
 
 # Intents considered "expensive" and therefore guarded by the governor.
 _GUARDED_PREFIXES = ("neuro.", "agents.run", "vision.generate")
@@ -37,12 +44,18 @@ class Singularity:
         *,
         bus: EventBus | None = None,
         governor: Governor | None = None,
+        resilience: dict[str, ResiliencePolicy] | None = None,
+        metrics: Metrics | None = None,
+        blackboard: Blackboard | None = None,
         supervise: bool = False,
         watchdog_interval_s: float = 5.0,
     ) -> None:
         self.registry = registry or build_default_registry()
         self.bus = bus or EventBus()
         self.governor = governor or Governor()
+        self.metrics = metrics or Metrics()
+        self.blackboard = blackboard or Blackboard()
+        self.resilience = resilience or default_policies([o.id for o in self.registry])
         self._supervise = supervise
         self._booted = False
         self._booted_at = 0.0
@@ -112,9 +125,23 @@ class Singularity:
                 raise
 
         await self.bus.emit("organ.invoke", {"organ": organ.id, "intent": intent}, source="kernel")
+        self.metrics.inc("singularity_route_total", {"organ": organ.id, "intent": intent})
         started = time.perf_counter()
-        result = await organ.invoke(intent, payload)
+        policy = self.resilience.get(organ.id)
+        try:
+            if policy is not None:
+                result = await policy.execute(lambda: organ.invoke(intent, payload))
+            else:
+                result = await organ.invoke(intent, payload)
+        except Exception as exc:  # noqa: BLE001 - record then re-raise
+            self.metrics.inc("singularity_route_errors_total", {"organ": organ.id})
+            await self.bus.emit(
+                "organ.error", {"organ": organ.id, "intent": intent, "error": repr(exc)},
+                source=organ.id,
+            )
+            raise
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+        self.metrics.observe("singularity_route_latency_ms", elapsed_ms, {"organ": organ.id})
 
         if intent.startswith(_GUARDED_PREFIXES):
             self.governor.record(usd=float(result.get("_usd", 0.0)))
@@ -167,6 +194,24 @@ class Singularity:
             "organs_engaged": ["neuro", "agents", "knowledge", "nexus"],
         }
 
+    # -- higher-order orchestration --------------------------------------
+    async def run_workflow(
+        self, workflow: "Workflow", context: dict[str, Any] | None = None
+    ) -> "WorkflowResult":
+        """Execute a declarative DAG of intents over the shared blackboard."""
+
+        if not self._booted:
+            raise OrganError("singularity is not booted")
+        await self.bus.emit("kernel.workflow", {"name": workflow.name})
+        return await workflow.run(self, context, blackboard=self.blackboard)
+
+    def mcp_bridge(self) -> "MCPBridge":
+        """Expose the federation as MCP tools (tools/list + tools/call)."""
+
+        from .mcp import MCPBridge
+
+        return MCPBridge(self)
+
     # -- introspection ----------------------------------------------------
     def status(self) -> dict[str, Any]:
         health = [o.health().as_dict() for o in self.registry]
@@ -183,6 +228,9 @@ class Singularity:
             "events_published": self.bus.total_published,
             "events_delivered": self.bus.total_delivered,
             "governor": self.governor.stats(),
+            "blackboard_keys": len(self.blackboard),
+            "circuits": {oid: p.breaker.stats()["state"] for oid, p in self.resilience.items()},
+            "metrics": self.metrics.snapshot(),
             "health": health,
         }
 
@@ -190,7 +238,7 @@ class Singularity:
         from .ecosystem import ECOSYSTEM
 
         return {
-            "version": "1.0.0",
+            "version": "1.1.0",
             "organs": [info.as_dict() for info in self.registry.describe_all()],
             "repos": [spec.as_dict() for spec in ECOSYSTEM],
             "intents": self.registry.intents(),
