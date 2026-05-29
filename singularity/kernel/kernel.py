@@ -24,6 +24,7 @@ from .config import SingularityConfig
 from .contracts import OrganError, Signal
 from .event_bus import EventBus
 from .governor import Governor, GovernorError
+from .memory import SessionStore
 from .observability import Metrics
 from .persistence import Checkpointer, MemoryCheckpointer
 from .policy import PolicyError, PolicyGate
@@ -67,6 +68,7 @@ class Singularity:
         self.blackboard = blackboard or Blackboard()
         self.policy = policy or PolicyGate()
         self.checkpointer = checkpointer or MemoryCheckpointer()
+        self.memory = SessionStore(self.checkpointer)
         self.resilience = resilience or default_policies([o.id for o in self.registry])
         self._supervise = supervise or self.config.supervise
         self._booted = False
@@ -304,6 +306,7 @@ class Singularity:
             "circuits": {oid: p.breaker.stats()["state"] for oid, p in self.resilience.items()},
             "scheduler_jobs": len(self.scheduler.jobs()),
             "checkpoints": len(self.checkpointer.list()),
+            "memory_sessions": len(self.memory),
             "metrics": self.metrics.snapshot(),
             "health": health,
         }
@@ -312,7 +315,7 @@ class Singularity:
         from .ecosystem import ECOSYSTEM
 
         return {
-            "version": "1.2.0",
+            "version": "1.3.0",
             "organs": [info.as_dict() for info in self.registry.describe_all()],
             "repos": [spec.as_dict() for spec in ECOSYSTEM],
             "intents": self.registry.intents(),
@@ -327,9 +330,10 @@ def build_default_kernel(
     *,
     force_mock: bool = False,
     supervise: bool = False,
+    plugins: bool = False,
     config: SingularityConfig | None = None,
 ) -> Singularity:
-    """Build a kernel with the canonical 8-organ federation."""
+    """Build a kernel with the canonical 8-organ federation (+ optional plugins)."""
 
     config = config or SingularityConfig(force_mock=force_mock, supervise=supervise)
     governor = Governor(
@@ -337,7 +341,7 @@ def build_default_kernel(
         max_calls_per_minute=config.max_calls_per_minute,
     )
     return Singularity(
-        build_default_registry(force_mock=config.force_mock or force_mock),
+        build_default_registry(force_mock=config.force_mock or force_mock, include_plugins=plugins),
         governor=governor,
         config=config,
         supervise=supervise or config.supervise,

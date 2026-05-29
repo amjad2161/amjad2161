@@ -229,7 +229,35 @@ Every `route()` mints a short `trace_id`, propagated into emitted signals and
 stamped onto the result (`_trace`) for correlation. The API's `/stream` endpoint
 turns the event bus into a live Server-Sent-Events feed of the whole organism.
 
-## 11. Extending the organism
+## 11. Reach & extensibility layers (v1.3)
+
+### 11.1 Memory ([`memory.py`](singularity/kernel/memory.py))
+
+A cross-cutting kernel service (like the bus and governor) providing long-term,
+session-scoped memory: turns accumulate per session and `recall` does
+keyword-scored retrieval across them, serialising through any checkpointer.
+The autopilot records each goal and its synthesised conclusion here, so the
+organism *remembers what it has done* across runs — agency's `MemoryStore`
+brought to the federation level.
+
+### 11.2 Plugins ([`plugins.py`](singularity/kernel/plugins.py))
+
+External packages contribute organs without touching the kernel, via the
+`singularity.organs` entry-point group or `SINGULARITY_PLUGINS=module:Attr`
+spec strings. Discovery is defensive (a broken plugin is skipped, never fatal)
+and respects the registry's intent-collision guard. `build_default_kernel(plugins=True)`
+opts in. This makes the "the body grows by adding organs" principle literally
+pluggable.
+
+### 11.3 Live dashboard & WebSocket ([`api/dashboard.py`](singularity/api/dashboard.py))
+
+A zero-build, dependency-free HTML dashboard served at `/` polls `/status` and
+subscribes to the `/stream` SSE feed to render organ health, circuit state,
+counters and a live event log. A `/ws` WebSocket mirrors the same nervous-system
+feed full-duplex (agency parity). The whole organism becomes observable in a
+browser with no front-end toolchain.
+
+## 12. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

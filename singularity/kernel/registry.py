@@ -72,8 +72,10 @@ class OrganRegistry:
         return organ_id in self._by_id
 
 
-def build_default_registry(*, force_mock: bool = False) -> OrganRegistry:
-    """Construct the canonical 8-organ federation.
+def build_default_registry(
+    *, force_mock: bool = False, include_plugins: bool = False
+) -> OrganRegistry:
+    """Construct the canonical 8-organ federation (+ discovered plugins).
 
     Imported lazily so the kernel package has no hard dependency cycle and so
     importing :mod:`singularity.kernel` stays cheap.
@@ -98,4 +100,13 @@ def build_default_registry(*, force_mock: bool = False) -> OrganRegistry:
         NexusOrgan,
         NetOrgan,
     )
-    return OrganRegistry(cls(force_mock=force_mock) for cls in organ_types)
+    registry = OrganRegistry(cls(force_mock=force_mock) for cls in organ_types)
+    if include_plugins:
+        from .plugins import discover_plugin_organs
+
+        for organ in discover_plugin_organs():
+            try:
+                registry.register(organ)
+            except OrganError:
+                continue  # skip duplicate ids / intent collisions defensively
+    return registry

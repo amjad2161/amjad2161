@@ -20,6 +20,8 @@ from .event_bus import EventBus
 from .governor import Governor, GovernorError
 from .kernel import Singularity, build_default_kernel
 from .mcp import MCPBridge
+from .memory import Session, SessionStore, Turn
+from .plugins import discover_plugin_organs, load_entrypoint_organs, load_spec_organs
 from .observability import Metrics
 from .persistence import Checkpointer, JSONCheckpointer, MemoryCheckpointer
 from .policy import PolicyDecision, PolicyError, PolicyGate
@@ -83,4 +85,10 @@ __all__ = [
     "AutopilotStep",
     "Scheduler",
     "Job",
+    "SessionStore",
+    "Session",
+    "Turn",
+    "discover_plugin_organs",
+    "load_entrypoint_organs",
+    "load_spec_organs",
 ]

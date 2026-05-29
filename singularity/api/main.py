@@ -13,13 +13,14 @@ import contextlib
 import json
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..kernel.contracts import OrganError, Signal
 from ..kernel.governor import GovernorError
 from ..kernel.kernel import build_default_kernel
+from .dashboard import DASHBOARD_HTML
 
 
 class RouteRequest(BaseModel):
@@ -34,6 +35,13 @@ class PulseRequest(BaseModel):
 class AutopilotRequest(BaseModel):
     goal: str
     max_iterations: int | None = None
+
+
+class RememberRequest(BaseModel):
+    content: str
+    role: str = "user"
+    sid: str = "default"
+    intent: str | None = None
 
 
 def create_app(*, force_mock: bool = False) -> FastAPI:
@@ -53,6 +61,10 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
         description="Hermetic kernel federating the BRAINIAC/JARVIS ecosystem.",
         lifespan=lifespan,
     )
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard() -> str:
+        return DASHBOARD_HTML
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -111,6 +123,20 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
     async def restore(name: str = "default") -> dict[str, Any]:
         return {"restored": kernel.restore(name), "blackboard_keys": len(kernel.blackboard)}
 
+    @app.post("/memory/remember")
+    async def remember(req: RememberRequest) -> dict[str, Any]:
+        turn = kernel.memory.remember(req.content, role=req.role, sid=req.sid, intent=req.intent)
+        return {"stored": turn.as_dict(), "session": kernel.memory.summary(req.sid)}
+
+    @app.get("/memory/recall")
+    async def recall(query: str, sid: str | None = None, limit: int = 5) -> dict[str, Any]:
+        hits = kernel.memory.recall(query, sid=sid, limit=limit)
+        return {"query": query, "hits": [t.as_dict() for t in hits], "count": len(hits)}
+
+    @app.get("/memory/sessions")
+    async def memory_sessions() -> dict[str, Any]:
+        return {"sessions": [kernel.memory.summary(sid) for sid in kernel.memory.sessions()]}
+
     @app.get("/stream")
     async def stream(request: Request) -> StreamingResponse:
         """Server-Sent Events: live feed of the nervous system."""
@@ -133,10 +159,31 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
                     except asyncio.TimeoutError:
                         yield ": keep-alive\n\n"
                         continue
-                    yield f"event: {signal.topic}\ndata: {json.dumps(signal.as_dict(), default=str)}\n\n"
+                    yield f"data: {json.dumps(signal.as_dict(), default=str)}\n\n"
             finally:
                 unsubscribe()
 
         return StreamingResponse(_events(), media_type="text/event-stream")
+
+    @app.websocket("/ws")
+    async def ws(websocket: WebSocket) -> None:
+        """WebSocket mirror of the nervous-system feed (agency parity)."""
+
+        await websocket.accept()
+        queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=256)
+
+        def _on_signal(signal: Signal) -> None:
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(signal)
+
+        unsubscribe = kernel.bus.subscribe("#", _on_signal)
+        try:
+            while True:
+                signal = await queue.get()
+                await websocket.send_json(signal.as_dict())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            unsubscribe()
 
     return app

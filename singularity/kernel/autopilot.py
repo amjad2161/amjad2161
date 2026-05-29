@@ -75,6 +75,8 @@ class Autopilot:
 
     async def run(self, goal: str, context: dict[str, Any] | None = None) -> AutopilotRun:
         run = AutopilotRun(goal=goal)
+        sid = f"autopilot:{goal[:32]}"
+        self.kernel.memory.remember(goal, role="user", sid=sid, intent="autopilot")
         await self.kernel.bus.emit("autopilot.start", {"goal": goal})
 
         plan = await self.kernel.route("neuro.plan", {"goal": goal, "max_tasks": self.max_iterations})
@@ -100,6 +102,10 @@ class Autopilot:
             "neuro.think", {"prompt": f"Conclude goal '{goal}'. Evidence: {summary}", "depth": "deep"}
         )
         run.conclusion = thought.get("thought", "")
+        self.kernel.memory.remember(
+            run.conclusion, role="assistant", sid=sid, intent="autopilot",
+            meta={"organs": run.organs_engaged, "iterations": run.iterations},
+        )
         await self.kernel.bus.emit("autopilot.done", {"goal": goal, "iterations": run.iterations})
         return run
 

@@ -85,6 +85,20 @@ async with build_default_kernel() as kernel:
     print(run.organs_engaged, run.conclusion)
 ```
 
+## Reach & extensibility (v1.3)
+
+| Layer | Module | Inspired by | What it adds |
+|-------|--------|-------------|--------------|
+| **Memory** | `kernel/memory.py` | agency `MemoryStore` / BRAINIAC sessions | Long-term, session-scoped memory with keyword recall; autopilot records goals + conclusions; persists via the checkpointer |
+| **Plugins** | `kernel/plugins.py` | Python entry points | Third-party organs via the `singularity.organs` entry-point group or `SINGULARITY_PLUGINS=mod:Attr` — grow the body without editing the kernel |
+| **Live dashboard** | `api/dashboard.py` | BRAINIAC / agency dashboards | Zero-build HTML page at `/` showing organ health, circuits, counters and a live event log (SSE) |
+| **WebSocket** | `api/main.py` `/ws` | agency `/ws` | Full-duplex nervous-system feed, mirroring SSE |
+
+```python
+# Run with discovered third-party organs:
+kernel = build_default_kernel(plugins=True)     # + SINGULARITY_PLUGINS=mypkg:WeatherOrgan
+```
+
 Compose an orchestration graph in code:
 
 ```python
@@ -155,8 +169,9 @@ asyncio.run(main())
 ```bash
 pip install -e '.[api]'
 python -m singularity serve --port 8088
-# GET  /health /manifest /organs /intents /metrics /blackboard /stream(SSE)
-# POST /route /pulse /autopilot /checkpoint /restore /mcp
+# GET  /  (live dashboard)  /health /manifest /organs /intents /metrics
+#      /blackboard /stream(SSE) /ws(WebSocket) /memory/recall /memory/sessions
+# POST /route /pulse /autopilot /checkpoint /restore /memory/remember /mcp
 #      (/mcp speaks MCP JSON-RPC: tools/list, tools/call)
 ```
 
@@ -181,14 +196,18 @@ singularity/
 │   ├── config.py        # typed SingularityConfig (env / TOML)
 │   ├── policy.py        # intent allow/deny + payload guard
 │   ├── persistence.py   # memory + JSON checkpointers (durability)
+│   ├── memory.py        # long-term session memory + recall
+│   ├── plugins.py       # third-party organ discovery (entry points / specs)
 │   └── kernel.py        # Singularity: boot/route/fanout/pulse/run_workflow/autopilot/status
 ├── organs/              # 8 mock-first adapters onto the universal contract
 │   ├── base.py  neuro.py  agents.py  knowledge.py
 │   └── sky.py   trade.py  vision.py  nexus.py  net.py
-├── api/main.py          # FastAPI gateway (+ /metrics /mcp /blackboard /autopilot /stream)
+├── api/                 # FastAPI gateway + live dashboard
+│   ├── main.py          #   /route /pulse /autopilot /mcp /stream /ws /memory/* ...
+│   └── dashboard.py     #   zero-build live HTML dashboard at /
 └── cli.py               # `singularity` command line (status/demo/workflow/autopilot/doctor/top/...)
 examples/                # runnable scripts (quickstart, workflow, autopilot, mcp)
-tests/                   # 78 tests, stdlib-only (no async plugin required)
+tests/                   # 86 tests, stdlib-only (no async plugin required)
 ```
 
 ## Testing
