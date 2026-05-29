@@ -46,8 +46,8 @@ class AgentsOrgan(BaseOrgan):
 
         if try_import("agency") is None:
             raise RuntimeError("agency unavailable")
-        from agency.jarvis_brain import SupremeJarvisBrain  # type: ignore
-        from agency.skills import SkillRegistry  # type: ignore
+        from agency.jarvis_brain import SupremeJarvisBrain
+        from agency.skills import SkillRegistry
 
         registry = SkillRegistry.load()
         self._backend = {"registry": registry, "brain": SupremeJarvisBrain(registry)}

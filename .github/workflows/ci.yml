@@ -28,8 +28,8 @@ jobs:
       - name: Lint (ruff)
         run: ruff check singularity tests
 
-      - name: Type check (mypy, non-blocking)
-        run: mypy singularity || true
+      - name: Type check (mypy)
+        run: mypy singularity
 
       - name: Test (pytest)
         run: pytest -q

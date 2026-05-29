@@ -29,6 +29,12 @@ def test_config_drives_kernel_governor():
 
 
 def test_from_toml(tmp_path):
+    import importlib.util
+
+    if importlib.util.find_spec("tomllib") is None and importlib.util.find_spec("tomli") is None:
+        import pytest
+
+        pytest.skip("no TOML parser available (py3.10 without tomli)")
     p = tmp_path / "s.toml"
     p.write_text("[singularity]\nforce_mock = true\nautopilot_max_iterations = 3\n")
     cfg = SingularityConfig.from_toml(str(p))

@@ -111,7 +111,7 @@ class ExternalMCPOrgan(BaseOrgan):
             payload = {k: v.get("type", "any") for k, v in (schema.get("properties") or {}).items()}
             caps.append(Capability(intent, tool.get("description", remote), payload))
         # Instance-level capabilities (shadow the empty class attr) + intent set.
-        self.capabilities = tuple(caps)  # type: ignore[assignment]
+        self.capabilities = tuple(caps)
         self._intents = {c.intent for c in caps}
         self._detail["server"] = self._server
         self._detail["tools"] = len(caps)

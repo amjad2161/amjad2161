@@ -54,11 +54,8 @@ def load_entrypoint_organs(group: str = "singularity.organs") -> list[Organ]:
     from importlib.metadata import entry_points
 
     organs: list[Organ] = []
-    try:
-        eps = entry_points(group=group)
-    except TypeError:  # pragma: no cover - very old importlib.metadata
-        eps = entry_points().get(group, [])  # type: ignore[attr-defined]
-    for ep in eps:
+    # entry_points(group=...) selection is supported on Python >= 3.10 (our floor).
+    for ep in entry_points(group=group):
         try:
             target = ep.load()
         except Exception:  # noqa: BLE001

@@ -62,7 +62,10 @@ class SingularityConfig:
 
     @classmethod
     def from_toml(cls, path: str) -> "SingularityConfig":
-        import tomllib  # stdlib (py3.11+)
+        try:
+            import tomllib  # stdlib (py3.11+)
+        except ModuleNotFoundError:  # py3.10 fallback
+            import tomli as tomllib
 
         with open(path, "rb") as fh:
             data = tomllib.load(fh)

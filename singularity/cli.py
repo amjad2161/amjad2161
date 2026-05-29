@@ -186,7 +186,7 @@ def _cmd_workflow(goal: str | None, force_mock: bool) -> int:
 def _cmd_demo(force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
         steps: list[dict[str, Any]] = []
-        showcase = [
+        showcase: list[tuple[str, dict[str, Any]]] = [
             ("neuro.plan", {"goal": "Survey a vineyard and trade the harvest futures"}),
             ("agents.route", {"request": "design a drone survey dashboard UI"}),
             ("sky.mission_plan", {"kind": "survey", "lat": 38.5, "lon": -122.4, "points": 6}),
@@ -229,7 +229,7 @@ def _cmd_demo(force_mock: bool) -> int:
 
 def _cmd_serve(host: str, port: int) -> int:
     try:
-        import uvicorn  # type: ignore
+        import uvicorn
 
         from .api.main import create_app
     except ImportError:

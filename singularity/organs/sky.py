@@ -38,8 +38,8 @@ class SkyOrgan(BaseOrgan):
 
         if try_import("skycore") is None:
             raise RuntimeError("skycore unavailable")
-        from skycore import GeoPoint, SimulatorDrone  # type: ignore
-        from skycore import missions  # type: ignore
+        from skycore import GeoPoint, SimulatorDrone
+        from skycore import missions
 
         self._backend = {"Geo": GeoPoint, "Sim": SimulatorDrone, "missions": missions}
         self._detail["skycore"] = True
