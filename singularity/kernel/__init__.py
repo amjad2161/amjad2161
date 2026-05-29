@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from .autopilot import Autopilot, AutopilotRun, AutopilotStep
 from .blackboard import Blackboard, append_reducer, merge_reducer
+from .config import SingularityConfig
 from .contracts import (
     Capability,
     Domain,
@@ -19,7 +21,10 @@ from .governor import Governor, GovernorError
 from .kernel import Singularity, build_default_kernel
 from .mcp import MCPBridge
 from .observability import Metrics
+from .persistence import Checkpointer, JSONCheckpointer, MemoryCheckpointer
+from .policy import PolicyDecision, PolicyError, PolicyGate
 from .registry import OrganRegistry, build_default_registry
+from .scheduler import Job, Scheduler
 from .resilience import (
     BulkheadFullError,
     CircuitBreaker,
@@ -66,4 +71,16 @@ __all__ = [
     "WorkflowResult",
     "WorkflowError",
     "Step",
+    "SingularityConfig",
+    "PolicyGate",
+    "PolicyDecision",
+    "PolicyError",
+    "Checkpointer",
+    "MemoryCheckpointer",
+    "JSONCheckpointer",
+    "Autopilot",
+    "AutopilotRun",
+    "AutopilotStep",
+    "Scheduler",
+    "Job",
 ]

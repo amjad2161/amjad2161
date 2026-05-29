@@ -181,7 +181,55 @@ BRAINIAC's `prometheus_metrics()`. The kernel records per-intent route counts,
 per-organ latency histograms and error counts; exposed at `/metrics` and via
 `singularity metrics`.
 
-## 10. Extending the organism
+## 10. Autonomy layers — the organism that acts on its own
+
+v1.1 made the federation reliable and composable; v1.2 makes it *autonomous,
+durable, governable and observable over time*.
+
+### 10.1 Autopilot ([`autopilot.py`](singularity/kernel/autopilot.py))
+
+The soul of the ecosystem (Mythos' loop, agency's `AutonomousLoop`, SuperAGI's
+executor). Given a goal it: (1) reasons a plan via `neuro.plan`; (2) dispatches
+each task to the best organ via a keyword router (`drone→sky`, `market→trade`,
+`design→vision`, `research→knowledge`, else `agents.run`); (3) observes each
+result onto the blackboard; (4) synthesises a conclusion via `neuro.think` — all
+under the governor's cost/rate budget and the policy gate. This is the leap from
+a federation that *can be called* to one that *acts*.
+
+### 10.2 Scheduler ([`scheduler.py`](singularity/kernel/scheduler.py))
+
+A lightweight async cron (mirroring the trading engine's `scheduler` edge
+function) that fires intents — or whole workflows — on an interval. Started and
+stopped with the kernel lifecycle when supervision is on, so the organism can
+pursue standing objectives without a human in the loop.
+
+### 10.3 Config ([`config.py`](singularity/kernel/config.py))
+
+One typed `SingularityConfig` hydrated from `SINGULARITY_*` env vars or a TOML
+file (stdlib `tomllib`). The kernel, governor and autopilot read from it instead
+of scattered `os.environ` access — BRAINIAC's config discipline.
+
+### 10.4 Policy ([`policy.py`](singularity/kernel/policy.py))
+
+A capability access-control gate enforced in `route()` before any organ runs:
+intent allow/deny lists with `prefix.*` wildcards, plus an optional
+prompt-injection guard on string payloads. Default permits everything (opt-in),
+but lets an operator expose only a safe subset to untrusted callers (e.g. an MCP
+client limited to `knowledge.*` + `neuro.think`).
+
+### 10.5 Persistence ([`persistence.py`](singularity/kernel/persistence.py))
+
+LangGraph-style checkpointers (in-memory + dependency-free JSON file) snapshot
+the blackboard so long-running autonomous tasks survive restarts and resume.
+`kernel.checkpoint()` / `kernel.restore()` make durability a one-liner.
+
+### 10.6 Tracing & streaming
+
+Every `route()` mints a short `trace_id`, propagated into emitted signals and
+stamped onto the result (`_trace`) for correlation. The API's `/stream` endpoint
+turns the event bus into a live Server-Sent-Events feed of the whole organism.
+
+## 11. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

@@ -8,13 +8,16 @@ depends on FastAPI.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import json
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from ..kernel.contracts import OrganError
+from ..kernel.contracts import OrganError, Signal
 from ..kernel.governor import GovernorError
 from ..kernel.kernel import build_default_kernel
 
@@ -26,6 +29,11 @@ class RouteRequest(BaseModel):
 
 class PulseRequest(BaseModel):
     goal: str
+
+
+class AutopilotRequest(BaseModel):
+    goal: str
+    max_iterations: int | None = None
 
 
 def create_app(*, force_mock: bool = False) -> FastAPI:
@@ -89,5 +97,46 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
 
         payload = await request.json()
         return await kernel.mcp_bridge().handle(payload)
+
+    @app.post("/autopilot")
+    async def autopilot(req: AutopilotRequest) -> dict[str, Any]:
+        run = await kernel.autopilot(req.goal, max_iterations=req.max_iterations)
+        return run.as_dict()
+
+    @app.post("/checkpoint")
+    async def checkpoint(name: str = "default") -> dict[str, Any]:
+        return {"saved": kernel.checkpoint(name), "checkpoints": kernel.checkpointer.list()}
+
+    @app.post("/restore")
+    async def restore(name: str = "default") -> dict[str, Any]:
+        return {"restored": kernel.restore(name), "blackboard_keys": len(kernel.blackboard)}
+
+    @app.get("/stream")
+    async def stream(request: Request) -> StreamingResponse:
+        """Server-Sent Events: live feed of the nervous system."""
+
+        queue: asyncio.Queue[Signal] = asyncio.Queue(maxsize=256)
+
+        def _on_signal(signal: Signal) -> None:
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(signal)
+
+        unsubscribe = kernel.bus.subscribe("#", _on_signal)
+
+        async def _events():
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        signal = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+                        continue
+                    yield f"event: {signal.topic}\ndata: {json.dumps(signal.as_dict(), default=str)}\n\n"
+            finally:
+                unsubscribe()
+
+        return StreamingResponse(_events(), media_type="text/event-stream")
 
     return app

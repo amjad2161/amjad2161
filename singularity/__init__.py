@@ -22,7 +22,9 @@ Public surface::
 
 from __future__ import annotations
 
+from .kernel.autopilot import Autopilot, AutopilotRun
 from .kernel.blackboard import Blackboard
+from .kernel.config import SingularityConfig
 from .kernel.contracts import (
     Capability,
     Domain,
@@ -37,19 +39,26 @@ from .kernel.contracts import (
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
 from .kernel.mcp import MCPBridge
+from .kernel.policy import PolicyGate
 from .kernel.registry import OrganRegistry, build_default_registry
+from .kernel.scheduler import Scheduler
 from .kernel.workflow import Workflow, WorkflowResult
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __all__ = [
     "__version__",
     "Singularity",
     "build_default_kernel",
+    "SingularityConfig",
     "OrganRegistry",
     "build_default_registry",
     "EventBus",
     "Workflow",
     "WorkflowResult",
+    "Autopilot",
+    "AutopilotRun",
+    "Scheduler",
+    "PolicyGate",
     "MCPBridge",
     "Blackboard",
     "Organ",

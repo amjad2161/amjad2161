@@ -60,6 +60,31 @@ python -m singularity mcp        # dump the MCP tools/list catalogue (24 tools)
 python -m singularity metrics    # Prometheus exposition after a warm-up pulse
 ```
 
+## Autonomy layers (v1.2) — the organism acts on its own
+
+| Layer | Module | Inspired by | What it adds |
+|-------|--------|-------------|--------------|
+| **Autopilot** | `kernel/autopilot.py` | Mythos / agency AutonomousLoop / SuperAGI | Goal → `neuro.plan` → dispatch each task to the best organ → observe → `neuro.think` conclusion, under the governor's budget |
+| **Scheduler** | `kernel/scheduler.py` | trading `scheduler` edge fn | Fire intents/workflows on an interval (cron-like) so the organism acts over time |
+| **Config** | `kernel/config.py` | BRAINIAC `config.py` | One typed `SingularityConfig` from `SINGULARITY_*` env or TOML |
+| **Policy** | `kernel/policy.py` | capability security / RBAC | Intent allow/deny (wildcards) + payload injection guard, enforced in `route()` |
+| **Persistence** | `kernel/persistence.py` | LangGraph checkpointers | Memory + JSON checkpointers — snapshot/restore the blackboard for durable, resumable runs |
+| **Tracing** | `kernel/kernel.py` | correlation IDs | Every `route()` carries a `trace_id` propagated through events and results |
+| **Streaming** | `api/main.py` `/stream` | SSE | Live Server-Sent-Events feed of the nervous system |
+
+```bash
+python -m singularity autopilot "survey a vineyard then hedge the harvest"  # autonomous loop
+python -m singularity doctor     # environment + health diagnostic
+python -m singularity top         # live status table
+```
+
+```python
+async with build_default_kernel() as kernel:
+    run = await kernel.autopilot("survey, hedge, and brief the team", max_iterations=6)
+    kernel.checkpoint("mission-1")          # durable snapshot of the blackboard
+    print(run.organs_engaged, run.conclusion)
+```
+
 Compose an orchestration graph in code:
 
 ```python
@@ -130,8 +155,9 @@ asyncio.run(main())
 ```bash
 pip install -e '.[api]'
 python -m singularity serve --port 8088
-# GET  /health  /manifest  /organs  /intents  /metrics  /blackboard
-# POST /route  /pulse  /mcp   (/mcp speaks MCP JSON-RPC: tools/list, tools/call)
+# GET  /health /manifest /organs /intents /metrics /blackboard /stream(SSE)
+# POST /route /pulse /autopilot /checkpoint /restore /mcp
+#      (/mcp speaks MCP JSON-RPC: tools/list, tools/call)
 ```
 
 ## Layout
@@ -150,13 +176,19 @@ singularity/
 │   ├── blackboard.py    # shared working memory (reducers + history)
 │   ├── observability.py # metrics registry + Prometheus exposition
 │   ├── mcp.py           # MCP tools/list + tools/call bridge
-│   └── kernel.py        # Singularity: boot/route/fanout/pulse/run_workflow/status
+│   ├── autopilot.py     # autonomous plan→act→observe loop
+│   ├── scheduler.py     # cron-like periodic intents/workflows
+│   ├── config.py        # typed SingularityConfig (env / TOML)
+│   ├── policy.py        # intent allow/deny + payload guard
+│   ├── persistence.py   # memory + JSON checkpointers (durability)
+│   └── kernel.py        # Singularity: boot/route/fanout/pulse/run_workflow/autopilot/status
 ├── organs/              # 8 mock-first adapters onto the universal contract
 │   ├── base.py  neuro.py  agents.py  knowledge.py
 │   └── sky.py   trade.py  vision.py  nexus.py  net.py
-├── api/main.py          # optional FastAPI gateway (+ /metrics /mcp /blackboard)
-└── cli.py               # `singularity` command line
-tests/                   # 62 tests, stdlib-only (no async plugin required)
+├── api/main.py          # FastAPI gateway (+ /metrics /mcp /blackboard /autopilot /stream)
+└── cli.py               # `singularity` command line (status/demo/workflow/autopilot/doctor/top/...)
+examples/                # runnable scripts (quickstart, workflow, autopilot, mcp)
+tests/                   # 78 tests, stdlib-only (no async plugin required)
 ```
 
 ## Testing

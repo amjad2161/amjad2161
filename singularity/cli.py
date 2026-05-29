@@ -97,6 +97,67 @@ def _cmd_pulse(goal: str, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_autopilot(goal: str, force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        result = await kernel.autopilot(goal)
+        return result.as_dict()
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
+def _cmd_doctor(force_mock: bool) -> int:
+    import importlib.util
+    import platform
+
+    from .organs.base import BaseOrgan
+
+    def _has(mod: str) -> bool:
+        return importlib.util.find_spec(mod) is not None
+
+    async def run(kernel: Singularity) -> Any:
+        return kernel.status()
+
+    status = asyncio.run(_with_kernel(run, force_mock=force_mock))
+    repos = BaseOrgan.repos_root()
+    report = {
+        "python": platform.python_version(),
+        "singularity": __version__,
+        "optional_deps": {
+            "fastapi": _has("fastapi"),
+            "uvicorn": _has("uvicorn"),
+            "pydantic": _has("pydantic"),
+        },
+        "repos_root": str(repos) if repos else None,
+        "organs": status["organs"],
+        "alive": status["alive"],
+        "real_mode": status["real_mode"],
+        "intents": status["intents"],
+        "verdict": "healthy" if status["alive"] == status["organs"] else "degraded",
+    }
+    _print(report)
+    return 0 if report["verdict"] == "healthy" else 1
+
+
+def _cmd_top(force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        await kernel.pulse("warm up")
+        return kernel.status()
+
+    status = asyncio.run(_with_kernel(run, force_mock=force_mock))
+    print(f"\n  SINGULARITY v{__version__}   organs={status['organs']}  "
+          f"alive={status['alive']}  real={status['real_mode']}  intents={status['intents']}")
+    print(f"  events: published={status['events_published']} delivered={status['events_delivered']}"
+          f"   blackboard_keys={status['blackboard_keys']}  jobs={status['scheduler_jobs']}\n")
+    print(f"  {'ORGAN':<12}{'MODE':<7}{'STATE':<10}{'CIRCUIT'}")
+    print("  " + "-" * 40)
+    circuits = status["circuits"]
+    for h in status["health"]:
+        print(f"  {h['organ']:<12}{h['mode']:<7}{h['liveness']:<10}{circuits.get(h['organ'], '-')}")
+    print()
+    return 0
+
+
 def _cmd_metrics(force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
         await kernel.pulse("warm up the metrics")
@@ -187,10 +248,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("intents", help="list routable intents")
     sub.add_parser("mcp", help="dump the MCP tools/list catalogue")
     sub.add_parser("metrics", help="warm up and print Prometheus metrics")
+    sub.add_parser("doctor", help="environment + health diagnostic")
+    sub.add_parser("top", help="one-shot live status table")
     sub.add_parser("demo", help="narrated showcase of the organism")
 
     p_workflow = sub.add_parser("workflow", help="run the demo survey-and-hedge DAG")
     p_workflow.add_argument("goal", nargs="?", default=None)
+
+    p_auto = sub.add_parser("autopilot", help="run an autonomous goal loop")
+    p_auto.add_argument("goal")
 
     p_route = sub.add_parser("route", help="route one intent")
     p_route.add_argument("intent")
@@ -226,8 +292,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "metrics":
         return _cmd_metrics(force_mock)
+    if args.command == "doctor":
+        return _cmd_doctor(force_mock)
+    if args.command == "top":
+        return _cmd_top(force_mock)
     if args.command == "workflow":
         return _cmd_workflow(args.goal, force_mock)
+    if args.command == "autopilot":
+        return _cmd_autopilot(args.goal, force_mock)
     if args.command == "route":
         try:
             payload = json.loads(args.payload)
