@@ -9,7 +9,11 @@ inspectable artifact.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import math
+import struct
+import zlib
 from typing import Any
 
 from ..kernel.contracts import Capability, Domain
@@ -26,8 +30,8 @@ class VisionOrgan(BaseOrgan):
                    {"prompt": "str", "width": "int?", "height": "int?", "steps": "int?"}),
         Capability("vision.analyze", "Summarise metadata for an image (size/colors).",
                    {"width": "int?", "height": "int?", "format": "str?"}),
-        Capability("vision.creative", "Produce a deterministic SVG badge for a label.",
-                   {"text": "str", "color": "str?"}),
+        Capability("vision.creative", "Produce a real PNG image + SVG badge for a label.",
+                   {"text": "str", "color": "str?", "size": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -55,7 +59,8 @@ class VisionOrgan(BaseOrgan):
                 "dominant_colors": ["#2b2d42", "#8d99ae", "#edf2f4"],
             }
         if intent == "vision.creative":
-            return self._svg_badge(str(payload.get("text", "SINGULARITY")), payload.get("color"))
+            return self._creative(str(payload.get("text", "SINGULARITY")), payload.get("color"),
+                                  int(payload.get("size", 96)))
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _generate(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -90,13 +95,62 @@ class VisionOrgan(BaseOrgan):
             "_usd": 0.0,
         }
 
-    def _svg_badge(self, text: str, color: str | None) -> dict[str, Any]:
+    def _creative(self, text: str, color: str | None, size: int) -> dict[str, Any]:
         fill = color or "#" + hashlib.sha256(text.encode()).hexdigest()[:6]
-        width = 12 * max(len(text), 4) + 24
+        bwidth = 12 * max(len(text), 4) + 24
         svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="36">'
-            f'<rect rx="6" width="{width}" height="36" fill="{fill}"/>'
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{bwidth}" height="36">'
+            f'<rect rx="6" width="{bwidth}" height="36" fill="{fill}"/>'
             f'<text x="12" y="24" font-family="monospace" font-size="16" fill="#fff">'
             f"{text}</text></svg>"
         )
-        return {"text": text, "color": fill, "svg": svg, "width": width, "height": 36}
+        size = max(16, min(size, 256))
+        png = _render_png(text, size)
+        return {
+            "text": text,
+            "color": fill,
+            "svg": svg,
+            "png_base64": base64.b64encode(png).decode(),
+            "png_bytes": len(png),
+            "width": size,
+            "height": size,
+            "_backend": "builtin-raster",
+        }
+
+
+def _render_png(seed_text: str, size: int) -> bytes:
+    """Generate a genuine, openable PNG of deterministic generative art."""
+
+    digest = hashlib.sha256(seed_text.encode()).digest()
+    a, b, c = digest[0] / 255, digest[1] / 255, digest[2] / 255
+    fr, fg, fb = digest[3], digest[4], digest[5]
+    pixels = bytearray()
+    for y in range(size):
+        for x in range(size):
+            u, v = x / size, y / size
+            r = int(127 + 127 * math.sin((u * (2 + a * 6) + b) * math.pi))
+            g = int(127 + 127 * math.sin((v * (2 + c * 6) + a) * math.pi))
+            bl = int(127 + 127 * math.sin(((u + v) * (1 + b * 4)) * math.pi))
+            pixels += bytes(((r ^ fr) & 255, (g ^ fg) & 255, (bl ^ fb) & 255))
+    return _encode_png(size, size, bytes(pixels))
+
+
+def _encode_png(width: int, height: int, rgb: bytes) -> bytes:
+    """Minimal, dependency-free 8-bit RGB PNG encoder."""
+
+    def _chunk(tag: bytes, data: bytes) -> bytes:
+        body = tag + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    stride = width * 3
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # filter type: none
+        raw += rgb[y * stride:(y + 1) * stride]
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _chunk(b"IHDR", ihdr)
+        + _chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + _chunk(b"IEND", b"")
+    )

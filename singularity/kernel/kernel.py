@@ -256,6 +256,29 @@ class Singularity:
 
         return MCPBridge(self)
 
+    async def mount_mcp(self, name: str, transport: Any, *, domain: Any = None) -> Any:
+        """Federate an external MCP server: mount its tools as live intents.
+
+        ``transport`` is any object with ``async request(payload)`` (e.g.
+        ``HTTPTransport(url)`` or ``InProcessTransport(other_kernel.mcp_bridge().handle)``).
+        Its tools become routable as ``ext.<name>.<tool>``.
+        """
+
+        from .mcp_client import ExternalMCPOrgan
+
+        organ = ExternalMCPOrgan(name, transport, domain=domain)
+        await organ.boot()
+        self.registry.register(organ)
+        self.resilience[organ.id] = ResiliencePolicy(
+            name=organ.id, timeout_s=self.config.request_timeout_s
+        )
+        self.watchdog.organs[organ.id] = organ
+        await self.bus.emit(
+            "kernel.mounted_mcp",
+            {"server": name, "intents": len(organ.describe().capabilities)},
+        )
+        return organ
+
     async def autopilot(
         self, goal: str, *, max_iterations: int | None = None, context: dict[str, Any] | None = None
     ) -> "AutopilotRun":
@@ -321,7 +344,7 @@ class Singularity:
         from .ecosystem import ECOSYSTEM
 
         return {
-            "version": "1.4.0",
+            "version": "1.5.0",
             "organs": [info.as_dict() for info in self.registry.describe_all()],
             "repos": [spec.as_dict() for spec in ECOSYSTEM],
             "intents": self.registry.intents(),

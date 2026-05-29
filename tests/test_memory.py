@@ -17,6 +17,15 @@ def test_remember_and_recall_ranks_by_relevance():
     assert "vineyard" in hits[0].content  # highest term frequency first
 
 
+def test_tfidf_recall_prefers_distinctive_terms():
+    store = SessionStore()
+    store.remember("the the the the the quick brown fox")  # common terms, low idf
+    store.remember("quantum entanglement teleportation protocol")  # distinctive
+    store.remember("a generic sentence about nothing in particular")
+    hits = store.recall("quantum teleportation", limit=1)
+    assert hits and "quantum" in hits[0].content
+
+
 def test_sessions_are_isolated():
     store = SessionStore()
     store.remember("alpha", sid="a")

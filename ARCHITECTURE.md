@@ -289,7 +289,31 @@ REAL; `tests/test_real_integration.py` proves the genuine paths execute (skippin
 cleanly when a repo is absent). The mock-first contract remains — the system
 still boots fully offline — but it never *claims* to be real when it is not.
 
-## 13. Extending the organism
+## 13. Federation & realism (v1.5)
+
+### 13.1 Bidirectional MCP ([`mcp_client.py`](singularity/kernel/mcp_client.py))
+
+v1.1 exposed the federation *as* MCP tools; v1.5 lets it *consume* MCP servers.
+`MCPClient` speaks `tools/list`/`tools/call` over a pluggable `Transport`
+(`InProcessTransport` for loopback, `HTTPTransport` for remote JSON-RPC).
+`kernel.mount_mcp(name, transport)` lists the remote tools, wraps them in an
+`ExternalMCPOrgan`, and registers them as live `ext.<name>.<tool>` intents — so
+external tool servers (or another whole SINGULARITY) become first-class organs
+at runtime. The loopback test mounts one kernel's bridge into another and routes
+a tool across the seam, proving the integration is real.
+
+### 13.2 Real quant, real raster, vector recall
+
+* **trade** now runs a genuine quant core: EMA/RSI/MACD indicators and an
+  event-driven backtester reporting Sharpe, max-drawdown and win-rate — real
+  finance math, `_backend: "builtin-quant"`.
+* **vision.creative** emits a genuine PNG via a dependency-free encoder
+  (`zlib` + `struct` + CRC) over procedurally generated art — an actual openable
+  image file, `_backend: "builtin-raster"`.
+* **memory.recall** upgraded from keyword counting to **TF-IDF cosine** retrieval
+  so distinctive terms outrank common ones.
+
+## 14. Extending the organism
 
 1. Add a `RepoSpec` to `ecosystem.py`.
 2. Create or extend an organ in `organs/` (subclass `BaseOrgan`, declare

@@ -9,6 +9,8 @@ than a federated organ: sessions accumulate turns across many organ calls, and
 
 from __future__ import annotations
 
+import math
+import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -61,16 +63,33 @@ class SessionStore:
         return turn
 
     def recall(self, query: str, *, sid: str | None = None, limit: int = 5) -> list[Turn]:
-        terms = [t for t in query.lower().split() if t]
+        """TF-IDF cosine retrieval over remembered turns (keyword-safe)."""
+
+        q_terms = _tokenize(query)
+        if not q_terms:
+            return []
         pool: list[Turn] = []
-        sessions = [self._sessions[sid]] if sid and sid in self._sessions else self._sessions.values()
+        sessions = (
+            [self._sessions[sid]] if sid and sid in self._sessions else list(self._sessions.values())
+        )
         for session in sessions:
             pool.extend(session.turns)
-        scored: list[tuple[int, float, Turn]] = []
-        for turn in pool:
-            text = turn.content.lower()
-            score = sum(text.count(term) for term in terms)
-            if score:
+        if not pool:
+            return []
+
+        docs = [_tokenize(t.content) for t in pool]
+        df: dict[str, int] = {}
+        for doc in docs:
+            for term in set(doc):
+                df[term] = df.get(term, 0) + 1
+        n = len(docs)
+        idf = {term: math.log((n + 1) / (count + 1)) + 1 for term, count in df.items()}
+
+        q_vec = _tfidf(q_terms, idf)
+        scored: list[tuple[float, float, Turn]] = []
+        for turn, doc in zip(pool, docs):
+            score = _cosine(q_vec, _tfidf(doc, idf))
+            if score > 0:
                 scored.append((score, turn.ts, turn))
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [turn for _, _, turn in scored[:limit]]
@@ -118,3 +137,27 @@ class SessionStore:
 
     def __len__(self) -> int:
         return len(self._sessions)
+
+
+# --------------------------------------------------------------------------
+# TF-IDF cosine helpers (dependency-free)
+# --------------------------------------------------------------------------
+def _tokenize(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]{2,}", text.lower())
+
+
+def _tfidf(terms: list[str], idf: dict[str, float]) -> dict[str, float]:
+    tf: dict[str, float] = {}
+    for term in terms:
+        tf[term] = tf.get(term, 0.0) + 1.0
+    return {term: count * idf.get(term, 1.0) for term, count in tf.items()}
+
+
+def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
+    if not a or not b:
+        return 0.0
+    common = set(a) & set(b)
+    dot = sum(a[t] * b[t] for t in common)
+    na = math.sqrt(sum(v * v for v in a.values()))
+    nb = math.sqrt(sum(v * v for v in b.values()))
+    return dot / (na * nb) if na and nb else 0.0

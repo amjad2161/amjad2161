@@ -111,6 +111,24 @@ async with build_default_kernel() as kernel:
     print(run.organs_engaged, run.conclusion)
 ```
 
+## Federation & realism (v1.5)
+
+| Layer | Module | What it adds |
+|-------|--------|--------------|
+| **MCP client** | `kernel/mcp_client.py` | Consume *external* MCP servers: `kernel.mount_mcp(name, transport)` mounts their tools as live `ext.<name>.<tool>` intents — bidirectional MCP, federating the whole MCP ecosystem (proven by a loopback test) |
+| **Real quant** | `organs/trade.py` | Genuine EMA-crossover + RSI signals and an event-driven backtester reporting return, **Sharpe**, **max-drawdown** and **win-rate** |
+| **Real raster** | `organs/vision.py` | `vision.creative` emits a genuine, openable **PNG** (stdlib encoder + procedural art), not just an SVG string |
+| **Vector recall** | `kernel/memory.py` | `memory.recall` upgraded to **TF-IDF cosine** retrieval (distinctive terms beat common ones) |
+
+```python
+# Federate another MCP server (or another SINGULARITY) as organs:
+from singularity import build_default_kernel, InProcessTransport
+a = build_default_kernel(); b = build_default_kernel()
+await a.boot(); await b.boot()
+await b.mount_mcp("alpha", InProcessTransport(a.mcp_bridge().handle))
+await b.route("ext.alpha.trade-signal", {"symbol": "ETH_USDT"})   # runs on A, through B
+```
+
 ## Reach & extensibility (v1.3)
 
 | Layer | Module | Inspired by | What it adds |

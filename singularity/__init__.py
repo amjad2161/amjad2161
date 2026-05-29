@@ -39,13 +39,14 @@ from .kernel.contracts import (
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
 from .kernel.mcp import MCPBridge
+from .kernel.mcp_client import HTTPTransport, InProcessTransport, MCPClient
 from .kernel.memory import SessionStore
 from .kernel.policy import PolicyGate
 from .kernel.registry import OrganRegistry, build_default_registry
 from .kernel.scheduler import Scheduler
 from .kernel.workflow import Workflow, WorkflowResult
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __all__ = [
     "__version__",
     "Singularity",
@@ -62,6 +63,9 @@ __all__ = [
     "SessionStore",
     "PolicyGate",
     "MCPBridge",
+    "MCPClient",
+    "InProcessTransport",
+    "HTTPTransport",
     "Blackboard",
     "Organ",
     "OrganInfo",

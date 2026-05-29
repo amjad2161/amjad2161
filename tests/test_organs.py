@@ -91,6 +91,27 @@ def test_vision_generate_emits_workflow():
     assert "KSampler" in {node["class_type"] for node in result["workflow"].values()}
 
 
+def test_vision_creative_produces_real_png():
+    import base64
+
+    organ = _booted(VisionOrgan)
+    result = asyncio.run(organ.invoke("vision.creative", {"text": "SINGULARITY", "size": 32}))
+    png = base64.b64decode(result["png_base64"])
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"  # genuine PNG signature
+    assert result["png_bytes"] == len(png) > 0
+    assert result["width"] == 32 and result["_backend"] == "builtin-raster"
+
+
+def test_trade_signal_has_real_indicators():
+    organ = _booted(TradeOrgan)
+    prices = [round(100 + i * 0.7, 2) for i in range(40)]  # uptrend
+    sig = asyncio.run(organ.invoke("trade.signal", {"prices": prices}))
+    assert {"rsi", "macd", "ema_fast", "ema_slow"} <= sig.keys()
+    assert 0 <= sig["rsi"] <= 100
+    bt = asyncio.run(organ.invoke("trade.backtest", {"prices": prices}))
+    assert {"sharpe", "max_drawdown_pct", "win_rate_pct"} <= bt.keys()
+
+
 def test_nexus_telemetry_flags_anomaly():
     organ = _booted(NexusOrgan)
     for _ in range(10):
