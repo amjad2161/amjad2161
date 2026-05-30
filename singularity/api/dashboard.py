@@ -93,8 +93,9 @@ DASHBOARD_HTML = """<!doctype html>
   <h2>Command console · route a goal through the real kernel</h2>
   <div class="crow" style="margin-bottom:8px">
     <input id="token" placeholder="API token" title="SINGULARITY_API_TOKEN (guarded routes)"/>
-    <input id="goal" placeholder="goal for /pulse  (e.g. survey a vineyard then hedge)"/>
-    <button id="bpulse">Pulse</button>
+    <input id="goal" placeholder="goal  (e.g. check the market and look at my screen)"/>
+    <button id="bjarvis" title="plan with the brain, execute organs in parallel, synthesise">JARVIS</button>
+    <button id="bpulse" class="ghost">Pulse</button>
   </div>
   <div class="crow">
     <input id="intent" placeholder="intent  (e.g. trade.signal)"/>
@@ -171,6 +172,10 @@ async function post(path,body){
     out.textContent='HTTP '+r.status+'\\n'+pretty;
   }catch(e){ out.textContent='request failed: '+e; }
 }
+document.getElementById('bjarvis').onclick=()=>{
+  const g=document.getElementById('goal').value.trim();
+  if(g){ document.getElementById('out').textContent='🧠 JARVIS: planning → parallel execution → synthesis (real LLM, may take ~60-90s)…'; post('./jarvis',{goal:g}); }
+};
 document.getElementById('bpulse').onclick=()=>{
   const g=document.getElementById('goal').value.trim(); if(g) post('./pulse',{goal:g});
 };
