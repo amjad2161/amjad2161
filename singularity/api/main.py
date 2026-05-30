@@ -58,16 +58,23 @@ class RememberRequest(BaseModel):
     intent: str | None = None
 
 
-def create_app(*, force_mock: bool = False) -> FastAPI:
-    kernel = build_default_kernel(force_mock=force_mock, supervise=True)
+def create_app(*, force_mock: bool = False, kernel: Any = None) -> FastAPI:
+    # An existing booted kernel may be injected (e.g. by `singularity awaken`) so
+    # the dashboard, the API and an interactive JARVIS loop all share ONE kernel
+    # and one event bus. When shared, the lifespan does not own its lifecycle.
+    shared = kernel is not None
+    if kernel is None:
+        kernel = build_default_kernel(force_mock=force_mock, supervise=True)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
-        await kernel.boot()
+        if not shared:
+            await kernel.boot()
         try:
             yield
         finally:
-            await kernel.shutdown()
+            if not shared:
+                await kernel.shutdown()
 
     app = FastAPI(
         title="SINGULARITY",

@@ -129,3 +129,107 @@ def _first_url(text: str) -> str | None:
 
     m = re.search(r"https?://[^\s\"'<>]+", text)
     return m.group(0) if m else None
+
+
+def _load_voice() -> Any:
+    """Best-effort voice backend (the local jarvis_voice if importable)."""
+    try:
+        import importlib
+
+        return importlib.import_module("jarvis_voice").Voice()
+    except Exception:
+        return None
+
+
+async def awaken(*, voice: bool = False, open_browser: bool = True,
+                 host: str = "127.0.0.1", port: int = 8088, goal: str | None = None) -> None:
+    """It all as one: boot the kernel (real organs), serve the live dashboard,
+    enable per-agent voice, and run the interactive JARVIS commander — all in ONE
+    process sharing ONE kernel + event bus, so the dashboard shows exactly what
+    JARVIS does as it does it."""
+    import asyncio
+    import contextlib
+    import webbrowser
+
+    from .kernel.kernel import build_default_kernel
+
+    kernel = build_default_kernel(supervise=True)
+    await kernel.boot()
+    real = kernel.status().get("real_mode", "?")
+
+    server = None
+    server_task = None
+    try:  # shared-kernel API + dashboard server (optional; needs the api extra)
+        import uvicorn
+
+        from .api.main import create_app
+
+        app = create_app(kernel=kernel)
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning", lifespan="off")
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+        for _ in range(60):  # wait until it is actually serving
+            if getattr(server, "started", False):
+                break
+            await asyncio.sleep(0.1)
+    except Exception as exc:  # noqa: BLE001
+        print(f"(dashboard server unavailable: {exc}) — continuing headless")
+
+    url = f"http://{host}:{port}/"
+    print(f"\n  ===  J A R V I S   A W A K E N E D  ===  {real}/9 organs REAL")
+    if server is not None:
+        print(f"  living interface: {url}\n")
+        if open_browser:
+            with contextlib.suppress(Exception):
+                webbrowser.open(url)
+
+    v = _load_voice() if voice else None
+    jarvis = Jarvis(kernel, voice=v)
+    if v is not None:
+        with contextlib.suppress(Exception):
+            v.speak_as("jarvis", f"JARVIS awakened. {real} of nine organs are real. I am ready.")
+
+    async def handle(g: str) -> None:
+        res = await jarvis.command(g)
+        print("JARVIS ›", res["conclusion"])
+        print(f"  (parallel organs: {', '.join(res['organs_engaged'])})")
+
+    try:
+        if goal:
+            await handle(goal)
+        else:
+            print("Speak or type a goal (or 'exit')." if v else "Type a goal (or 'exit').")
+            while True:
+                try:
+                    if v is not None:
+                        g, src = await asyncio.to_thread(v.listen)
+                        if src == "speech":
+                            print(f"you (spoken) › {g}")
+                    else:
+                        g = (await asyncio.to_thread(input, "\nyou › ")).strip()
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if not g:
+                    continue
+                if g.lower() in ("exit", "quit", "יציאה"):
+                    break
+                await handle(g)
+    finally:
+        if server is not None and server_task is not None:
+            server.should_exit = True
+            with contextlib.suppress(Exception):
+                await server_task
+        await kernel.shutdown()
+        if v is not None:
+            with contextlib.suppress(Exception):
+                v.speak_as("jarvis", "Goodbye, sir.")
+
+
+def awaken_main(**kwargs: Any) -> int:
+    import asyncio
+
+    try:
+        asyncio.run(awaken(**kwargs))
+    except KeyboardInterrupt:
+        pass
+    return 0

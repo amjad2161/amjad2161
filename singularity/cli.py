@@ -297,6 +297,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_jarvis.add_argument("--voice", action="store_true",
                           help="speak the conclusion (if a voice backend is present)")
 
+    p_awaken = sub.add_parser(
+        "awaken", help="IT ALL AS ONE: boot kernel + live dashboard + voice + JARVIS loop")
+    p_awaken.add_argument("goal", nargs="?", default=None)
+    p_awaken.add_argument("--voice", action="store_true", help="hands-free voice loop")
+    p_awaken.add_argument("--no-browser", action="store_true", help="do not open the dashboard")
+    p_awaken.add_argument("--port", type=int, default=8088)
+
     p_serve = sub.add_parser("serve", help="start the HTTP gateway")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8088)
@@ -343,6 +350,11 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pulse(args.goal, force_mock)
     if args.command == "jarvis":
         return _cmd_jarvis(args.goal, args.voice, force_mock)
+    if args.command == "awaken":
+        from .jarvis import awaken_main
+
+        return awaken_main(voice=args.voice, open_browser=not args.no_browser,
+                           port=args.port, goal=args.goal)
     if args.command == "demo":
         return _cmd_demo(force_mock)
     if args.command == "serve":
