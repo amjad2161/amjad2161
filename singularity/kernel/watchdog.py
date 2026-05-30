@@ -59,11 +59,15 @@ class Watchdog:
             if health.liveness is Liveness.DOWN:
                 await self._resurrect(organ_id, organ, state)
             else:
-                if state.failures:
+                if state.failures or state.reboots:
                     await self.bus.publish(
                         Signal("watchdog.recovered", {"organ": organ_id}, source="watchdog")
                     )
+                # Reset the FULL backoff state on recovery — previously `reboots`
+                # was never cleared, so after one exhaustion the next blip went
+                # straight to the degraded branch without retrying (#7).
                 state.failures = 0
+                state.reboots = 0
                 state.backoff = 0.0
             report[organ_id] = organ.health().liveness.value
         return report
@@ -71,6 +75,13 @@ class Watchdog:
     async def _resurrect(self, organ_id: str, organ: Organ, state: _OrganState) -> None:
         state.failures += 1
         if state.reboots >= self.max_reboots:
+            # Exhausted retries: mark the organ DEGRADED (usable, reduced
+            # fidelity) instead of leaving it DOWN and only emitting an event —
+            # otherwise run_once() keeps reporting "down" and invoke() keeps
+            # rejecting calls for an organ the system could still use (#7).
+            degrade = getattr(organ, "degrade", None)
+            if callable(degrade):
+                degrade("watchdog: max reboots exhausted")
             await self.bus.publish(
                 Signal(
                     "watchdog.degraded",

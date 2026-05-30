@@ -51,18 +51,32 @@ class NeuroOrgan(BaseOrgan):
         self._detail["mythos"] = mythos is not None
         self._detail["brainiac"] = brainiac is not None
 
+    # Backends whose presence in a result's ``_backend`` means it was genuinely
+    # produced by real upstream code (vs. the deterministic builtin reasoner).
+    _REAL_BACKENDS = ("mythos", "brainiac", "neurocore")
+
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
         if intent == "neuro.think":
-            return self._think(str(payload.get("prompt", "")), str(payload.get("depth", "standard")))
-        if intent == "neuro.plan":
-            return self._plan(str(payload.get("goal", "")), int(payload.get("max_tasks", 5)))
-        if intent == "neuro.autonomous_run":
-            return await self._autonomous_run(
+            result = self._think(str(payload.get("prompt", "")), str(payload.get("depth", "standard")))
+        elif intent == "neuro.plan":
+            result = self._plan(str(payload.get("goal", "")), int(payload.get("max_tasks", 5)))
+        elif intent == "neuro.autonomous_run":
+            result = await self._autonomous_run(
                 str(payload.get("goal", "")), int(payload.get("max_iterations", 3))
             )
-        if intent == "neuro.humanize":
-            return self._humanize(str(payload.get("text", "")))
-        raise AssertionError("unreachable")  # pragma: no cover
+        elif intent == "neuro.humanize":
+            result = self._humanize(str(payload.get("text", "")))
+        else:
+            raise AssertionError("unreachable")  # pragma: no cover
+
+        # Honest provenance (fixes P1): the organ may be in REAL mode because a
+        # backend attached for `neuro.autonomous_run`, but `think`/`plan`/
+        # `humanize` are served by the deterministic builtin reasoner. Stamp
+        # `_mode` from what ACTUALLY produced the result so a builtin answer is
+        # never advertised as "real" just because the organ reached REAL mode.
+        backend = str(result.get("_backend", ""))
+        result["_mode"] = "real" if backend.startswith(self._REAL_BACKENDS) else "mock"
+        return result
 
     def _humanize(self, text: str) -> dict[str, Any]:
         original = text

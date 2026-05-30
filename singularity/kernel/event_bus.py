@@ -26,6 +26,7 @@ class EventBus:
         self._history: deque[Signal] = deque(maxlen=history)
         self._delivered = 0
         self._published = 0
+        self._handler_errors = 0
 
     # -- subscription -----------------------------------------------------
     def subscribe(self, pattern: str, handler: Handler) -> Callable[[], None]:
@@ -52,8 +53,15 @@ class EventBus:
         for pattern, handlers in list(self._subs.items()):
             if self._match(pattern, signal.topic):
                 for handler in list(handlers):
-                    await self._dispatch(handler, signal)
-                    delivered += 1
+                    try:
+                        await self._dispatch(handler, signal)
+                        delivered += 1
+                    except Exception:  # noqa: BLE001
+                        # A subscriber (logger / metrics / another organ) must
+                        # never break the publisher — kernel.route() publishes on
+                        # its hot path, so a raising observer would fail routing
+                        # *after* the organ already ran. Isolate and tally it.
+                        self._handler_errors += 1
         self._delivered += delivered
         return delivered
 

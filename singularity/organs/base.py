@@ -70,6 +70,15 @@ class BaseOrgan:
             self._liveness = Liveness.DORMANT
             self._backend = None
 
+    def degrade(self, reason: str = "") -> None:
+        """Mark the organ DEGRADED — responding with reduced fidelity but still
+        invokable. Used by the watchdog when reboots are exhausted, so the organ
+        becomes usable-but-degraded instead of staying DOWN and rejecting calls.
+        """
+        self._liveness = Liveness.DEGRADED
+        if reason:
+            self._detail["degraded"] = reason
+
     # -- health / describe ------------------------------------------------
     def health(self) -> Health:
         return Health(self.id, self._liveness, self._mode, dict(self._detail))

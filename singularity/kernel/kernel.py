@@ -158,9 +158,13 @@ class Singularity:
             await self.bus.emit("kernel.denied", {"intent": intent, "reason": decision.reason})
             raise PolicyError(decision.reason)
 
-        if intent.startswith(_GUARDED_PREFIXES):
+        guarded = intent.startswith(_GUARDED_PREFIXES)
+        est_usd = float(payload.get("_est_usd", 0.0))
+        if guarded:
             try:
-                self.governor.check(est_usd=float(payload.get("_est_usd", 0.0)))
+                # Atomic reserve BEFORE the await — concurrent fan-out can no
+                # longer all pass the budget check and then exceed it (#5).
+                self.governor.reserve(est_usd=est_usd)
             except GovernorError as exc:
                 await self.bus.emit("kernel.throttled", {"intent": intent, "error": str(exc)})
                 raise
@@ -176,7 +180,9 @@ class Singularity:
                 result = await policy.execute(lambda: organ.invoke(intent, payload))
             else:
                 result = await organ.invoke(intent, payload)
-        except Exception as exc:  # noqa: BLE001 - record then re-raise
+        except Exception as exc:  # noqa: BLE001 - refund reservation then re-raise
+            if guarded:
+                self.governor.refund(est_usd=est_usd)
             self.metrics.inc("singularity_route_errors_total", {"organ": organ.id})
             await self.bus.emit(
                 "organ.error", {"organ": organ.id, "intent": intent, "error": repr(exc)},
@@ -186,8 +192,8 @@ class Singularity:
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         self.metrics.observe("singularity_route_latency_ms", elapsed_ms, {"organ": organ.id})
 
-        if intent.startswith(_GUARDED_PREFIXES):
-            self.governor.record(usd=float(result.get("_usd", 0.0)))
+        if guarded:
+            self.governor.commit(est_usd=est_usd, usd=float(result.get("_usd", 0.0)))
 
         result.setdefault("_trace", trace_id)
         await self.bus.publish(
