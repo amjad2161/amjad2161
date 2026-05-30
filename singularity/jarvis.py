@@ -91,10 +91,15 @@ class Jarvis:
         )
         conclusion = str(synth.get("thought", "")) or "done"
 
-        # 4) SPEAK it (if a voice backend is attached).
+        # 4) SPEAK it (if a voice backend is attached) — in the brain's own voice
+        # when the backend supports per-agent voices, else plainly.
         if self.voice is not None:
             try:
-                self.voice.speak(conclusion[:400])
+                speak_as = getattr(self.voice, "speak_as", None)
+                if callable(speak_as):
+                    speak_as("neuro", conclusion[:400])
+                else:
+                    self.voice.speak(conclusion[:400])
             except Exception:  # noqa: BLE001 - voice is best-effort
                 pass
 
