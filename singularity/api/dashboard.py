@@ -73,6 +73,12 @@ DASHBOARD_HTML = """<!doctype html>
   #out{margin-top:10px;background:#070b13;border:1px solid var(--line);border-radius:8px;padding:10px;
        max-height:26vh;overflow:auto;white-space:pre-wrap;font-size:11.5px;color:#bfe9f5;min-height:20px}
   .muted{color:var(--dim)}
+  .hero{position:relative;height:300px;margin:8px 22px 0;border:1px solid var(--line);
+        border-radius:16px;overflow:hidden;
+        background:radial-gradient(600px 300px at 50% 40%,rgba(34,211,238,.07),transparent),#04060c}
+  .hero canvas{width:100%;height:100%;display:block}
+  .herocap{position:absolute;left:0;right:0;bottom:12px;text-align:center;color:var(--dim);
+           font-size:11px;letter-spacing:6px;text-transform:uppercase;pointer-events:none}
 </style>
 </head>
 <body>
@@ -80,6 +86,8 @@ DASHBOARD_HTML = """<!doctype html>
   <h1>SINGULARITY</h1><span class="v" id="ver"></span>
   <span class="stat" id="stat">connecting…</span>
 </header>
+
+<div class="hero"><canvas id="core"></canvas><div class="herocap" id="herocap">JARVIS</div></div>
 
 <div class="wrap">
   <div>
@@ -113,6 +121,7 @@ async function poll(){
   try{
     const h=await(await fetch('./health')).json();
     const s=h.status||{};
+    window._st=s;
     set('ver','v'+(s_version(s)));
     set('stat','');
     const st=document.getElementById('stat');
@@ -153,6 +162,7 @@ function logLine(topic,data){
   d.appendChild(document.createTextNode(' '+topic+' '));
   const v=el('span',null,data); v.style.color='#7d8ca8'; d.appendChild(v);
   log.prepend(d); while(log.childNodes.length>250) log.removeChild(log.lastChild);
+  window._pulse=performance.now();   // flare the core on every nervous-system event
 }
 try{
   const es=new EventSource('./stream');
@@ -185,6 +195,51 @@ document.getElementById('broute').onclick=()=>{
   if(raw){try{payload=JSON.parse(raw);}catch(e){document.getElementById('out').textContent='payload is not valid JSON';return;}}
   post('./route',{intent,payload});
 };
+// ── living interface: a JARVIS core with the 9 organs as an orbiting constellation
+const ORDER=['neuro','agents','knowledge','sky','trade','vision','nexus','net','control'];
+function drawCore(){
+  const cv=document.getElementById('core'); if(!cv){requestAnimationFrame(drawCore);return;}
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr;}
+  const g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2, t=performance.now()/1000;
+  const flare=Math.max(0,1-(performance.now()-(window._pulse||0))/900); // 0..1 on events
+  const st=window._st||{}; const health=st.health||[];
+  const modeOf={}; health.forEach(h=>modeOf[h.organ]=h.mode);
+  const realN=st.real_mode||0;
+  // connections + nodes
+  const R=Math.min(W,H)*0.36;
+  ORDER.forEach((id,i)=>{
+    const a=t*0.15 + i*2*Math.PI/ORDER.length;
+    const x=cx+R*Math.cos(a), y=cy+R*Math.sin(a);
+    const real=modeOf[id]==='real';
+    const col=real?'34,211,238':'90,100,120';
+    g.strokeStyle=`rgba(${col},${real?0.35:0.12})`; g.lineWidth=real?1.4:0.8;
+    g.beginPath(); g.moveTo(cx,cy); g.lineTo(x,y); g.stroke();
+    const pr=real?5+1.5*Math.sin(t*2+i):3.5;
+    g.beginPath(); g.fillStyle=`rgba(${col},${real?0.95:0.5})`;
+    g.shadowColor=`rgba(${col},${real?0.9:0})`; g.shadowBlur=real?14:0;
+    g.arc(x,y,pr,0,7); g.fill(); g.shadowBlur=0;
+    g.fillStyle=`rgba(${col},${real?0.95:0.55})`; g.font='11px ui-monospace,monospace';
+    g.textAlign=x<cx-4?'right':(x>cx+4?'left':'center');
+    g.fillText(id,x+(x<cx-4?-9:(x>cx+4?9:0)),y+(y<cy?-9:14));
+  });
+  // central arc-reactor core
+  for(let k=3;k>=1;k--){
+    g.beginPath(); g.strokeStyle=`rgba(34,211,238,${(0.10+0.06*flare)*k})`;
+    g.lineWidth=2; g.arc(cx,cy,18+k*9+2*Math.sin(t*1.5+k),0,7); g.stroke();
+  }
+  const cr=14+3*Math.sin(t*2)+6*flare;
+  const grd=g.createRadialGradient(cx,cy,0,cx,cy,cr*2.4);
+  grd.addColorStop(0,`rgba(180,245,255,${0.9})`); grd.addColorStop(0.4,`rgba(34,211,238,${0.6+0.3*flare})`);
+  grd.addColorStop(1,'rgba(34,211,238,0)');
+  g.fillStyle=grd; g.beginPath(); g.arc(cx,cy,cr*2.4,0,7); g.fill();
+  g.fillStyle='#eaffff'; g.beginPath(); g.arc(cx,cy,cr,0,7); g.fill();
+  g.fillStyle='rgba(125,140,168,.9)'; g.font='10px ui-monospace,monospace'; g.textAlign='center';
+  g.fillText(`${realN}/9 REAL`, cx, cy+cr*2.4+14);
+  requestAnimationFrame(drawCore);
+}
+requestAnimationFrame(drawCore);
 poll(); setInterval(poll,2000);
 </script>
 </body>
