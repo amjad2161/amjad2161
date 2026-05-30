@@ -15,7 +15,7 @@ def test_list_tools_matches_intents():
     kernel = build_default_kernel(force_mock=True)
     bridge = kernel.mcp_bridge()
     tools = bridge.list_tools()
-    assert len(tools) == len(kernel.registry.intents()) == 30
+    assert len(tools) == len(kernel.registry.intents()) == 33
     sample = next(t for t in tools if t["name"] == "neuro-think")
     schema = sample["inputSchema"]
     assert schema["type"] == "object"
@@ -38,7 +38,7 @@ def test_tools_list_jsonrpc():
 
     resp = asyncio.run(run())
     assert resp["jsonrpc"] == "2.0" and resp["id"] == 1
-    assert len(resp["result"]["tools"]) == 30
+    assert len(resp["result"]["tools"]) == 33
 
 
 def test_tools_call_executes_intent():

@@ -41,6 +41,11 @@ class ControlOrgan(BaseOrgan):
                    {"goal": "str", "url": "str?", "max_steps": "int?"}),
         Capability("control.transfer", "Build a localsend-style P2P transfer session spec.",
                    {"filename": "str", "size_bytes": "int?", "peer": "str?"}),
+        Capability("control.screen_info", "Perceive: real screen size + cursor position.", {}),
+        Capability("control.screenshot", "Perceive: capture the screen to a PNG.",
+                   {"name": "str?"}),
+        Capability("control.speak", "Voice: speak text aloud (Windows SAPI / pyttsx3).",
+                   {"text": "str"}),
     )
 
     async def _attach_real(self) -> None:
@@ -68,7 +73,64 @@ class ControlOrgan(BaseOrgan):
         if intent == "control.transfer":
             return self._transfer(str(payload.get("filename", "file.bin")),
                                   int(payload.get("size_bytes", 1024)), str(payload.get("peer", "")))
+        if intent == "control.screen_info":
+            return await asyncio.to_thread(self._screen_info)
+        if intent == "control.screenshot":
+            return await asyncio.to_thread(self._screenshot, str(payload.get("name", "screenshot")))
+        if intent == "control.speak":
+            return await asyncio.to_thread(self._speak, str(payload.get("text", "")))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    # -- real perception + voice (merged from the local JARVIS computer-use) ---
+    def _screen_info(self) -> dict[str, Any]:
+        try:
+            import pyautogui
+        except Exception:
+            return {"ok": False, "error": "pyautogui not available on this host",
+                    "_backend": "builtin"}
+        w, h = pyautogui.size()
+        x, y = pyautogui.position()
+        return {"ok": True, "screen": {"width": int(w), "height": int(h)},
+                "cursor": {"x": int(x), "y": int(y)}, "_backend": "pyautogui"}
+
+    def _screenshot(self, name: str) -> dict[str, Any]:
+        import tempfile
+        from pathlib import Path
+
+        try:
+            import pyautogui
+        except Exception:
+            return {"ok": False, "error": "pyautogui not available on this host",
+                    "_backend": "builtin"}
+        if not name.lower().endswith(".png"):
+            name += ".png"
+        dest = Path(tempfile.gettempdir()) / "singularity-control" / Path(name).name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        img = pyautogui.screenshot()
+        img.save(str(dest))
+        return {"ok": True, "path": str(dest),
+                "size": {"width": img.width, "height": img.height}, "_backend": "pyautogui"}
+
+    def _speak(self, text: str) -> dict[str, Any]:
+        if not text:
+            return {"ok": False, "error": "no text", "_backend": "builtin"}
+        try:  # Windows SAPI — no install needed
+            import win32com.client
+
+            win32com.client.Dispatch("SAPI.SpVoice").Speak(text)
+            return {"ok": True, "spoke": text[:200], "_backend": "sapi"}
+        except Exception:
+            pass
+        try:  # cross-platform fallback
+            import pyttsx3
+
+            engine = pyttsx3.init()
+            engine.say(text)
+            engine.runAndWait()
+            return {"ok": True, "spoke": text[:200], "_backend": "pyttsx3"}
+        except Exception:
+            return {"ok": False, "error": "no TTS backend (SAPI/pyttsx3) on this host",
+                    "_backend": "builtin"}
 
     async def _browse(self, url: str) -> dict[str, Any]:
         parsed = urlparse(url)
