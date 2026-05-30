@@ -25,24 +25,93 @@ class TradeOrgan(BaseOrgan):
     vision = "Turn market data into governed, risk-aware autonomous trading decisions."
     capabilities = (
         Capability("trade.signal", "Compute a BUY/SELL/HOLD signal (EMA crossover + RSI filter).",
-                   {"prices": "list[float]", "fast": "int?", "slow": "int?"}),
+                   {"prices": "list[float]?", "symbol": "str?", "fast": "int?", "slow": "int?"}),
         Capability("trade.backtest", "Backtest the strategy: return, Sharpe, max-drawdown, win-rate.",
-                   {"prices": "list[float]", "fast": "int?", "slow": "int?", "cash": "float?"}),
-        Capability("trade.status", "Report engine/treasury status.", {"symbol": "str?"}),
+                   {"prices": "list[float]?", "symbol": "str?", "fast": "int?", "slow": "int?",
+                    "cash": "float?"}),
+        Capability("trade.status", "Report engine/treasury status (live ticker when available).",
+                   {"symbol": "str?"}),
     )
 
+    async def _attach_real(self) -> None:
+        # Real market data via ccxt public endpoints (no API key needed). The
+        # quant math is already real; this feeds it genuine live prices.
+        import asyncio
+
+        def _probe() -> Any:
+            try:
+                import ccxt
+            except Exception:
+                return None
+            try:
+                return ccxt.binance({"enableRateLimit": True})
+            except Exception:
+                return None
+
+        exchange = await asyncio.to_thread(_probe)
+        if exchange is None:
+            raise RuntimeError("ccxt market-data backend unavailable")
+        self._backend = {"exchange": exchange, "name": "binance"}
+        self._detail["market_data"] = "ccxt:binance"
+
+    def _real_closes(self, symbol: str, timeframe: str, limit: int) -> list[float] | None:
+        exchange = (self._backend or {}).get("exchange")
+        if exchange is None:
+            return None
+        try:
+            ohlcv = exchange.fetch_ohlcv(symbol.replace("_", "/"), timeframe,
+                                         limit=min(max(limit, 60), 500))
+            return [float(c[4]) for c in ohlcv]
+        except Exception:
+            return None
+
+    def _real_ticker(self, symbol: str) -> float | None:
+        exchange = (self._backend or {}).get("exchange")
+        if exchange is None:
+            return None
+        try:
+            return float(exchange.fetch_ticker(symbol.replace("_", "/"))["last"])
+        except Exception:
+            return None
+
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if intent == "trade.signal":
-            prices = _series(payload)
-            return self._signal(prices, int(payload.get("fast", 12)), int(payload.get("slow", 26)))
-        if intent == "trade.backtest":
-            prices = _series(payload)
-            return self._backtest(prices, int(payload.get("fast", 12)),
-                                  int(payload.get("slow", 26)), float(payload.get("cash", 1000.0)))
+        import asyncio
+
+        symbol = str(payload.get("symbol", "BTC/USDT"))
+        timeframe = str(payload.get("timeframe", "1h"))
+        live_name = (self._backend or {}).get("name")
+
+        if intent in ("trade.signal", "trade.backtest"):
+            prices = [float(p) for p in (payload.get("prices") or [])]
+            backend = "builtin-quant"
+            if not prices and self._backend is not None:
+                real = await asyncio.to_thread(self._real_closes, symbol, timeframe, 200)
+                if real:
+                    prices, backend = real, f"ccxt:{live_name}"
+            if not prices:
+                prices = _series(payload)
+            fast, slow = int(payload.get("fast", 12)), int(payload.get("slow", 26))
+            if intent == "trade.signal":
+                result = self._signal(prices, fast, slow)
+            else:
+                result = self._backtest(prices, fast, slow, float(payload.get("cash", 1000.0)))
+            if backend.startswith("ccxt"):
+                result.update({"_backend": backend, "symbol": symbol,
+                               "timeframe": timeframe, "price": round(prices[-1], 2),
+                               "candles": len(prices)})
+            result["_mode"] = "real" if str(result.get("_backend", "")).startswith("ccxt") else "mock"
+            return result
+
         if intent == "trade.status":
+            if self._backend is not None:
+                last = await asyncio.to_thread(self._real_ticker, symbol)
+                if last is not None:
+                    return {"symbol": symbol, "last": last, "engine": "live-data",
+                            "open_positions": 0, "treasury_usd": 1000.0, "mode": "paper",
+                            "_backend": f"ccxt:{live_name}", "_mode": "real"}
             return {"symbol": str(payload.get("symbol", "BTC_USDT")), "engine": "idle",
                     "open_positions": 0, "treasury_usd": 1000.0, "mode": "paper",
-                    "_backend": "builtin-quant"}
+                    "_backend": "builtin-quant", "_mode": "mock"}
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _signal(self, prices: list[float], fast: int, slow: int) -> dict[str, Any]:
