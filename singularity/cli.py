@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from . import _console  # noqa: F401  — UTF-8-safe console before any glyph output
+
 import argparse
 import asyncio
 import json
