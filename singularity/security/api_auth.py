@@ -27,8 +27,15 @@ import hmac
 import os
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:  # avoid importing FastAPI in the stdlib-only core
-    from fastapi import FastAPI, Request
+# `Request` must be importable at RUNTIME: FastAPI resolves the require_token
+# annotation via get_type_hints when registering the route, and a string/
+# forward-ref it can't resolve would be misread as a required query param
+# (making every guarded route return 422). api_auth is only ever imported by the
+# FastAPI gateway, so this does not pull FastAPI into the stdlib-only core.
+from fastapi import Request
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 _TOKEN_ENV = "SINGULARITY_API_TOKEN"
 # State-changing / expensive routes that MUST carry auth.
@@ -43,7 +50,7 @@ def _configured_token() -> str | None:
     return tok or None
 
 
-async def require_token(request: "Request") -> None:
+async def require_token(request: Request) -> None:
     """FastAPI dependency: enforce a bearer token, constant-time compared."""
     from fastapi import HTTPException
 

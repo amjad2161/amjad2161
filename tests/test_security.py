@@ -149,3 +149,37 @@ def test_eventbus_isolates_handler_exceptions() -> None:
 
     delivered = asyncio.run(run())
     assert delivered == 1   # the good handler still received it
+
+
+# ── #3 gateway auth, end-to-end through the real FastAPI app ─────────────────
+def test_gateway_auth_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercises the full middleware + dependency stack via TestClient.
+
+    A direct unit call to require_token() cannot catch annotation-resolution
+    bugs in FastAPI's dependency injection (a forward-ref `Request` was once
+    misread as a query param, making every guarded route 422). This does.
+    """
+    pytest.importorskip("fastapi")
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from singularity.api.main import create_app
+
+    body = {"intent": "neuro.think", "payload": {"prompt": "hi"}}
+
+    monkeypatch.delenv("SINGULARITY_API_TOKEN", raising=False)
+    with TestClient(create_app(force_mock=True)) as c:
+        assert c.get("/health").status_code == 200          # public stays open
+        assert c.post("/route", json=body).status_code == 503  # fail-closed, not 422
+
+    monkeypatch.setenv("SINGULARITY_API_TOKEN", "topsecret")
+    with TestClient(create_app(force_mock=True)) as c:
+        assert c.post("/route", json=body).status_code == 401            # no header
+        assert c.post("/route", headers={"Authorization": "Bearer nope"},
+                      json=body).status_code == 403                       # bad token
+        ok = c.post("/route", headers={"Authorization": "Bearer topsecret"}, json=body)
+        assert ok.status_code == 200 and ok.json().get("thought")        # good token runs
+        ssrf = c.post("/route", headers={"Authorization": "Bearer topsecret"},
+                      json={"intent": "control.browse",
+                            "payload": {"url": "http://169.254.169.254/latest/meta-data/"}})
+        assert ssrf.json()["ok"] is False                                # SSRF blocked live
