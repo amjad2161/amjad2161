@@ -17,6 +17,7 @@ import zlib
 from typing import Any
 
 from ..kernel.contracts import Capability, Domain
+from ..security.safe_render import safe_color, svg_badge
 from .base import BaseOrgan
 
 
@@ -142,14 +143,11 @@ class VisionOrgan(BaseOrgan):
         }
 
     def _creative(self, text: str, color: str | None, size: int) -> dict[str, Any]:
-        fill = color or "#" + hashlib.sha256(text.encode()).hexdigest()[:6]
-        bwidth = 12 * max(len(text), 4) + 24
-        svg = (
-            f'<svg xmlns="http://www.w3.org/2000/svg" width="{bwidth}" height="36">'
-            f'<rect rx="6" width="{bwidth}" height="36" fill="{fill}"/>'
-            f'<text x="12" y="24" font-family="monospace" font-size="16" fill="#fff">'
-            f"{text}</text></svg>"
-        )
+        # XSS / SVG-injection safe: `text` is XML-escaped and `color` is validated
+        # against a strict allowlist before entering the SVG. A value like
+        # "</text><script>…" can no longer break out of the markup.
+        fill = safe_color(color, fallback="#" + hashlib.sha256(text.encode()).hexdigest()[:6])
+        svg = svg_badge(text, fill)
         size = max(16, min(size, 256))
         png = _render_png(text, size)
         return {

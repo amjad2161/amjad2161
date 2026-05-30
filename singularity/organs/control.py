@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from ..kernel.contracts import Capability, Domain
+from ..security.netguard import SSRFError, safe_fetch
 from .base import BaseOrgan
 
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
@@ -75,29 +76,21 @@ class ControlOrgan(BaseOrgan):
             return {"url": url, "ok": False, "error": "invalid url", "_backend": "builtin"}
 
         def _get() -> dict[str, Any]:
-            import urllib.request
-
-            req = urllib.request.Request(url, headers={"User-Agent": "singularity-control/1.0"})
-            with urllib.request.urlopen(req, timeout=8) as resp:  # noqa: S310
-                body = resp.read(200_000).decode("utf-8", "ignore")
-                title_m = _TITLE.search(body)
-                text = _TAGS.sub(" ", body)
-                text = re.sub(r"\s+", " ", text).strip()
-                return {
-                    "url": resp.geturl(),
-                    "status": resp.status,
-                    "ok": 200 <= resp.status < 400,
-                    "title": (title_m.group(1).strip() if title_m else "")[:200],
-                    "text_snippet": text[:400],
-                    "bytes": len(body),
-                    "_backend": "urllib",
-                }
+            # SSRF-guarded fetch: resolves the host and rejects loopback,
+            # private, link-local and cloud-metadata targets, and re-validates
+            # after every redirect hop. Never reaches 169.254.169.254 / 127.0.0.1.
+            try:
+                return {**safe_fetch(url, max_bytes=200_000, timeout=8),
+                        "_mode": self._mode.value}
+            except SSRFError as exc:
+                return {"url": url, "ok": False, "error": f"blocked: {exc}",
+                        "_backend": "builtin", "_mode": self._mode.value}
 
         try:
             return await asyncio.to_thread(_get)
         except Exception as exc:  # noqa: BLE001 - egress blocked → honest fallback
             return {"url": url, "ok": False, "error": f"{type(exc).__name__}",
-                    "note": "real fetch failed (no egress?); would GET via urllib when reachable",
+                    "note": "real fetch failed (no egress?); would GET via the guarded fetcher when reachable",
                     "_backend": "mock"}
 
     def _plan_actions(self, goal: str, url: str | None, max_steps: int) -> dict[str, Any]:

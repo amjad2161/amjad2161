@@ -13,13 +13,22 @@ import contextlib
 import json
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..kernel.contracts import OrganError, Signal
 from ..kernel.governor import GovernorError
 from ..kernel.kernel import build_default_kernel
+from ..security.api_auth import install_security, require_token
 from .dashboard import DASHBOARD_HTML
 
 
@@ -62,6 +71,11 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Fail-closed auth + security headers. Mutating/expensive routes below carry
+    # Depends(require_token); with no SINGULARITY_API_TOKEN set they return 503
+    # rather than running an open control plane.
+    install_security(app)
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> str:
         return DASHBOARD_HTML
@@ -82,7 +96,7 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
     async def intents() -> dict[str, str]:
         return kernel.registry.intents()
 
-    @app.post("/route")
+    @app.post("/route", dependencies=[Depends(require_token)])
     async def route(req: RouteRequest) -> dict[str, Any]:
         try:
             return await kernel.route(req.intent, req.payload)
@@ -91,7 +105,7 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
         except OrganError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.post("/pulse")
+    @app.post("/pulse", dependencies=[Depends(require_token)])
     async def pulse(req: PulseRequest) -> dict[str, Any]:
         return await kernel.pulse(req.goal)
 
@@ -103,27 +117,27 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
     async def blackboard() -> dict[str, Any]:
         return {"keys": kernel.blackboard.keys(), "snapshot": kernel.blackboard.snapshot()}
 
-    @app.post("/mcp")
+    @app.post("/mcp", dependencies=[Depends(require_token)])
     async def mcp(request: Request) -> dict[str, Any]:
         """MCP JSON-RPC 2.0 endpoint: tools/list and tools/call."""
 
         payload = await request.json()
         return await kernel.mcp_bridge().handle(payload)
 
-    @app.post("/autopilot")
+    @app.post("/autopilot", dependencies=[Depends(require_token)])
     async def autopilot(req: AutopilotRequest) -> dict[str, Any]:
         run = await kernel.autopilot(req.goal, max_iterations=req.max_iterations)
         return run.as_dict()
 
-    @app.post("/checkpoint")
+    @app.post("/checkpoint", dependencies=[Depends(require_token)])
     async def checkpoint(name: str = "default") -> dict[str, Any]:
         return {"saved": kernel.checkpoint(name), "checkpoints": kernel.checkpointer.list()}
 
-    @app.post("/restore")
+    @app.post("/restore", dependencies=[Depends(require_token)])
     async def restore(name: str = "default") -> dict[str, Any]:
         return {"restored": kernel.restore(name), "blackboard_keys": len(kernel.blackboard)}
 
-    @app.post("/memory/remember")
+    @app.post("/memory/remember", dependencies=[Depends(require_token)])
     async def remember(req: RememberRequest) -> dict[str, Any]:
         turn = kernel.memory.remember(req.content, role=req.role, sid=req.sid, intent=req.intent)
         return {"stored": turn.as_dict(), "session": kernel.memory.summary(req.sid)}

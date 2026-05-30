@@ -54,6 +54,16 @@ DASHBOARD_HTML = """<!doctype html>
   <div class="panel"><h2>Live nervous system</h2><div id="log"></div></div>
 </div>
 <script>
+// XSS-safe: every value from /status and the /stream SSE feed is written via
+// textContent / DOM construction, never innerHTML. Attacker-controlled payloads
+// (e.g. a /pulse goal "<img src=x onerror=...>") therefore render as inert text
+// instead of executing in the operator's browser.
+function el(tag, cls, text){
+  const e=document.createElement(tag);
+  if(cls) e.className=cls;
+  if(text!=null) e.textContent=text;
+  return e;
+}
 async function poll(){
   try{
     const s = await (await fetch('./status')).json();
@@ -61,25 +71,38 @@ async function poll(){
     document.getElementById('stat').textContent =
       `${s.alive}/${s.organs} alive · ${s.real_mode} real · ${s.intents} intents · `+
       `${s.events_published} events · ${s.memory_sessions||0} sessions`;
-    const o = document.getElementById('organs'); o.innerHTML='';
+    const o = document.getElementById('organs'); o.textContent='';
     (s.health||[]).forEach(h=>{
       const circ = (s.circuits||{})[h.organ]||'-';
-      o.innerHTML += `<div class="organ"><div class="id"><span class="dot ${h.liveness}"></span>${h.organ}</div>`+
-        `<div class="meta">${h.mode} · ${h.liveness}</div>`+
-        `<div class="meta"><span class="badge">circuit ${circ}</span></div></div>`;
+      const card = el('div','organ');
+      const id = el('div','id');
+      // liveness only ever drives a CSS class; sanitise to letters defensively.
+      id.appendChild(el('span','dot '+String(h.liveness||'').replace(/[^a-z]/gi,'')));
+      id.appendChild(document.createTextNode(String(h.organ)));
+      card.appendChild(id);
+      card.appendChild(el('div','meta', `${h.mode} · ${h.liveness}`));
+      const meta2 = el('div','meta');
+      meta2.appendChild(el('span','badge','circuit '+circ));
+      card.appendChild(meta2);
+      o.appendChild(card);
     });
-    const c = document.getElementById('counters'); c.innerHTML='';
+    const c = document.getElementById('counters'); c.textContent='';
     const counters=(s.metrics&&s.metrics.counters)||{};
     Object.keys(counters).sort().slice(0,12).forEach(k=>{
-      c.innerHTML += `<div class="kv"><span>${k}</span><b>${counters[k]}</b></div>`;
+      const row = el('div','kv');
+      row.appendChild(el('span',null,k));
+      const b=document.createElement('b'); b.textContent=counters[k];
+      row.appendChild(b); c.appendChild(row);
     });
   }catch(e){ document.getElementById('stat').textContent='offline'; }
 }
 function logLine(topic,data){
   const log=document.getElementById('log');
-  const t=new Date().toLocaleTimeString();
   const d=document.createElement('div');
-  d.innerHTML=`<span class="t">${t}</span> ${topic} <span style="color:#8b98a9">${data}</span>`;
+  d.appendChild(el('span','t', new Date().toLocaleTimeString()));
+  d.appendChild(document.createTextNode(' '+topic+' '));
+  const v=el('span',null,data); v.style.color='#8b98a9';
+  d.appendChild(v);
   log.prepend(d);
   while(log.childNodes.length>200) log.removeChild(log.lastChild);
 }
