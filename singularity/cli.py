@@ -108,6 +108,24 @@ def _cmd_autopilot(goal: str, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_jarvis(goal: str, use_voice: bool, force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        from .jarvis import Jarvis
+
+        voice = None
+        if use_voice:
+            try:  # optional voice backend (local jarvis_voice if on path)
+                from jarvis_voice import Voice
+
+                voice = Voice()
+            except Exception:
+                voice = None
+        return await Jarvis(kernel, voice=voice).command(goal)
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_doctor(force_mock: bool) -> int:
     import importlib.util
     import platform
@@ -273,6 +291,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_pulse = sub.add_parser("pulse", help="one coherent cross-organ heartbeat")
     p_pulse.add_argument("goal")
 
+    p_jarvis = sub.add_parser(
+        "jarvis", help="unified JARVIS: plan -> parallel multi-organ execute -> synthesise")
+    p_jarvis.add_argument("goal")
+    p_jarvis.add_argument("--voice", action="store_true",
+                          help="speak the conclusion (if a voice backend is present)")
+
     p_serve = sub.add_parser("serve", help="start the HTTP gateway")
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8088)
@@ -317,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_route(args.intent, payload, force_mock)
     if args.command == "pulse":
         return _cmd_pulse(args.goal, force_mock)
+    if args.command == "jarvis":
+        return _cmd_jarvis(args.goal, args.voice, force_mock)
     if args.command == "demo":
         return _cmd_demo(force_mock)
     if args.command == "serve":

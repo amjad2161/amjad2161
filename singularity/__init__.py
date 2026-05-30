@@ -36,6 +36,7 @@ from .kernel.contracts import (
     OrganInfo,
     Signal,
 )
+from .jarvis import Jarvis
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
 from .kernel.mcp import MCPBridge
@@ -51,6 +52,7 @@ __all__ = [
     "__version__",
     "Singularity",
     "build_default_kernel",
+    "Jarvis",
     "SingularityConfig",
     "OrganRegistry",
     "build_default_registry",

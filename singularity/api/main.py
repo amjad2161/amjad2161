@@ -46,6 +46,11 @@ class AutopilotRequest(BaseModel):
     max_iterations: int | None = None
 
 
+class JarvisRequest(BaseModel):
+    goal: str
+    max_tasks: int = 5
+
+
 class RememberRequest(BaseModel):
     content: str
     role: str = "user"
@@ -128,6 +133,13 @@ def create_app(*, force_mock: bool = False) -> FastAPI:
     async def autopilot(req: AutopilotRequest) -> dict[str, Any]:
         run = await kernel.autopilot(req.goal, max_iterations=req.max_iterations)
         return run.as_dict()
+
+    @app.post("/jarvis", dependencies=[Depends(require_token)])
+    async def jarvis(req: JarvisRequest) -> dict[str, Any]:
+        """Unified JARVIS: plan -> parallel multi-organ execution -> synthesis."""
+        from ..jarvis import Jarvis
+
+        return await Jarvis(kernel).command(req.goal, max_tasks=req.max_tasks)
 
     @app.post("/checkpoint", dependencies=[Depends(require_token)])
     async def checkpoint(name: str = "default") -> dict[str, Any]:
