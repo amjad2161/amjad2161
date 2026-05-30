@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "singularity-kernel"
+version = "1.6.1"
+description = "SINGULARITY — a hermetic kernel that federates the BRAINIAC/JARVIS ecosystem of repos into one autonomous superintelligence that works together and apart."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "amjad2161" }]
+keywords = ["agents", "autonomous", "orchestration", "jarvis", "brainiac", "singularity", "ai"]
+
+# The kernel core runs on the standard library alone (asyncio only).
+# The lone exception is a TOML parser backport for Python < 3.11 (tomllib is
+# stdlib from 3.11). Every heavy capability is an *optional* extra so the system
+# boots fully in mock mode.
+dependencies = ["tomli>=2.0; python_version < '3.11'"]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6"]
+dev = ["pytest>=8.0", "ruff>=0.4", "mypy>=1.9"]
+all = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6"]
+
+[project.scripts]
+singularity = "singularity.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["singularity*"]
+
+[tool.setuptools.package-data]
+singularity = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+ignore_missing_imports = true
