@@ -45,20 +45,48 @@ def repos_root() -> Path | None:
     return None
 
 
+def _extra_paths() -> list[str]:
+    """Absolute import dirs for repos that live OUTSIDE a single checkout root.
+
+    Real machines keep repos scattered. Two generic, portable sources:
+      * ``SINGULARITY_REPO_PATHS`` env var (os.pathsep-separated absolute dirs)
+      * ``~/.singularity/repos.txt`` (one absolute dir per line, ``#`` comments)
+    Each listed dir is the directory that makes a package importable (e.g. the
+    ``runtime`` folder containing the ``agency`` package).
+    """
+    paths: list[str] = []
+    env = os.environ.get("SINGULARITY_REPO_PATHS", "")
+    if env:
+        paths += [p for p in env.split(os.pathsep) if p.strip()]
+    cfg = Path.home() / ".singularity" / "repos.txt"
+    if cfg.is_file():
+        try:
+            paths += [ln.strip() for ln in cfg.read_text(encoding="utf-8").splitlines()
+                      if ln.strip() and not ln.strip().startswith("#")]
+        except Exception:  # noqa: BLE001 - unreadable config is non-fatal
+            pass
+    return paths
+
+
 def ensure_paths() -> list[str]:
     """Add every available sibling repo path to ``sys.path``. Idempotent."""
 
-    root = repos_root()
     added: list[str] = []
-    if root is None:
-        return added
-    for rels in _SIBLINGS.values():
-        for rel in rels:
-            path = (root / rel).resolve()
-            sp = str(path)
-            if path.is_dir() and sp not in sys.path:
-                sys.path.append(sp)
-                added.append(sp)
+    # 1) Scattered repos declared via env / config file (absolute dirs).
+    for p in _extra_paths():
+        if p and Path(p).is_dir() and p not in sys.path:
+            sys.path.append(p)
+            added.append(p)
+    # 2) Single-checkout-root model (all siblings under one parent).
+    root = repos_root()
+    if root is not None:
+        for rels in _SIBLINGS.values():
+            for rel in rels:
+                path = (root / rel).resolve()
+                sp = str(path)
+                if path.is_dir() and sp not in sys.path:
+                    sys.path.append(sp)
+                    added.append(sp)
     return added
 
 
