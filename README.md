@@ -194,9 +194,27 @@ async with build_default_kernel() as kernel:
 
 ## Quick start
 
+**One command — the whole JARVIS, as one:**
+
+```bash
+pip install -e '.[api]'
+python -m singularity awaken --voice    # boot every organ + live dashboard + voice
+```
+
+`awaken` runs the entire organism in one process sharing one kernel: it boots the
+organs, serves the **living-interface dashboard** (animated core + organ
+constellation) and opens it in your browser, enables **per-agent voices**, and
+runs the interactive **JARVIS commander** — speak or type a goal and it plans with
+the real brain, executes organs **in parallel**, synthesises, and speaks back. The
+dashboard shows exactly what JARVIS does as it does it.
+
+More granular surfaces:
+
 ```bash
 pip install -e .                 # core kernel — zero third-party deps
-python -m singularity status     # boot all 8 organs, print aggregated health
+python -m singularity status     # boot all 9 organs, print aggregated health
+python -m singularity doctor     # which organs are REAL vs MOCK on this machine
+python -m singularity jarvis "check the market and look at my screen"  # one unified command
 python -m singularity demo       # narrated showcase of organs working together
 ```
 
