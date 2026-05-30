@@ -49,15 +49,21 @@ class KnowledgeOrgan(BaseOrgan):
         self._index: list[dict[str, str]] = []
 
     async def _attach_real(self) -> None:
+        index: list[dict[str, str]] = []
         root = self.repos_root()
-        if root is None:
-            raise RuntimeError("no repos root for asset scan")
-        index = _scan_assets(root)
+        if root is not None:
+            index = _scan_assets(root)
+        # Also index any configured knowledge roots (real .md agent/skill corpora
+        # that live outside a single checkout — e.g. an agency-agents repo).
+        for kroot in _extra_knowledge_roots():
+            if len(index) >= _MAX_INDEX:
+                break
+            _scan_md_tree(Path(kroot), Path(kroot).name, index)
         if not index:
             raise RuntimeError("no assets found on disk")
-        self._index = index
-        self._detail["indexed"] = len(index)
-        self._detail["root"] = str(root)
+        self._index = index[:_MAX_INDEX]
+        self._detail["indexed"] = len(self._index)
+        self._detail["root"] = str(root) if root else "extra-knowledge-roots"
 
     async def _on_boot(self) -> None:
         if not self._index:  # mock fallback
@@ -114,6 +120,56 @@ def _scan_assets(root: Path) -> list[dict[str, str]]:
     _scan_skills(root / "claude-code", "claude-code", index)
     _scan_prompts(root / "system-prompts-and-models-of-ai-tools", index)
     return index[:_MAX_INDEX]
+
+
+_SKIP_MD = {"readme.md", "changelog.md", "contributing.md", "license.md",
+            "code_of_conduct.md", "security.md"}
+
+
+def _extra_knowledge_roots() -> list[str]:
+    """Absolute corpus roots from ``SINGULARITY_KNOWLEDGE_PATHS`` env (os.pathsep
+    separated) and ``~/.singularity/knowledge.txt`` (one path per line)."""
+    import os
+
+    roots: list[str] = []
+    env = os.environ.get("SINGULARITY_KNOWLEDGE_PATHS", "")
+    if env:
+        roots += [p for p in env.split(os.pathsep) if p.strip()]
+    cfg = Path.home() / ".singularity" / "knowledge.txt"
+    if cfg.is_file():
+        try:
+            roots += [ln.strip() for ln in cfg.read_text(encoding="utf-8").splitlines()
+                      if ln.strip() and not ln.strip().startswith("#")]
+        except Exception:  # noqa: BLE001 - unreadable config is non-fatal
+            pass
+    return roots
+
+
+def _scan_md_tree(base: Path, source: str, index: list[dict[str, str]]) -> None:
+    """Recursively index real agent/skill ``.md`` files (those with frontmatter)
+    under ``base`` — skips docs/readmes and vendored trees."""
+    if not base.is_dir():
+        return
+    for path in base.rglob("*.md"):
+        if len(index) >= _MAX_INDEX:
+            return
+        parts = {p.lower() for p in path.parts}
+        if ".git" in parts or "node_modules" in parts:
+            continue
+        if path.name.lower() in _SKIP_MD:
+            continue
+        meta = _frontmatter(path)
+        if not meta.get("name") and not meta.get("description"):
+            continue  # only genuine agent/skill definitions carry frontmatter
+        index.append(
+            {
+                "kind": "agent",
+                "name": meta.get("name") or path.stem,
+                "description": meta.get("description", "")[:280],
+                "source": source,
+                "path": str(path),
+            }
+        )
 
 
 def _scan_skills(base: Path, source: str, index: list[dict[str, str]]) -> None:
