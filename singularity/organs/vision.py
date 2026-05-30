@@ -26,6 +26,8 @@ class VisionOrgan(BaseOrgan):
     domain = Domain.PERCEPTION
     title = "OmniVision — perception & creation"
     vision = "Generate and understand media through a unified graph-based perception engine."
+    # Real multimodal image understanding (local llava) can take ~30s.
+    invoke_timeout_s = 120.0
     capabilities = (
         Capability("vision.generate", "Build a ComfyUI workflow for a text-to-image job.",
                    {"prompt": "str", "width": "int?", "height": "int?", "steps": "int?"}),
@@ -43,16 +45,100 @@ class VisionOrgan(BaseOrgan):
         import os
         import urllib.request
 
+        # 1) ComfyUI (full generative media) if its server is reachable.
         base = os.environ.get("COMFYUI_URL", "http://127.0.0.1:8188")
-        with urllib.request.urlopen(f"{base}/system_stats", timeout=1.5):  # noqa: S310
+        try:
+            with urllib.request.urlopen(f"{base}/system_stats", timeout=1.5):  # noqa: S310
+                pass
+            self._backend = {"comfyui": base}
+            self._detail["comfyui"] = base
+            return
+        except Exception:
             pass
-        self._backend = base
-        self._detail["comfyui"] = base
+        # 2) Local multimodal LLM (real image UNDERSTANDING) via Ollama llava.
+        vmodel = self._probe_ollama_vision()
+        if vmodel is None:
+            raise RuntimeError("no real vision backend (ComfyUI / multimodal LLM) available")
+        self._backend = {"ollama_vision": vmodel}
+        self._detail["ollama_vision"] = vmodel
+
+    @staticmethod
+    def _probe_ollama_vision() -> str | None:
+        import json
+        import os
+        import urllib.request
+
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        try:
+            with urllib.request.urlopen(f"{host}/api/tags", timeout=2) as r:
+                models = json.loads(r.read()).get("models", [])
+        except Exception:
+            return None
+        for m in models:
+            name = (m.get("name") or "").lower()
+            if any(t in name for t in ("llava", "vision", "bakllava", "moondream")):
+                return str(m.get("name"))
+        return None
+
+    def _analyze_real(self, image_b64: str, prompt: str) -> str | None:
+        import json
+        import os
+        import urllib.request
+
+        model = (self._backend or {}).get("ollama_vision")
+        if not model:
+            return None
+        # Downscale large images so a local multimodal model responds in budget.
+        try:
+            import base64 as _b64
+            import io
+
+            from PIL import Image  # Pillow ships with pyautogui
+
+            img = Image.open(io.BytesIO(_b64.b64decode(image_b64)))
+            img.thumbnail((1024, 1024))
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="PNG")
+            image_b64 = _b64.b64encode(buf.getvalue()).decode()
+        except Exception:
+            pass
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        body = {"model": model, "prompt": prompt or "Describe this image in detail.",
+                "images": [image_b64], "stream": False, "options": {"num_predict": 200}}
+        try:
+            req = urllib.request.Request(
+                f"{host}/api/generate", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=110) as r:
+                return str(json.loads(r.read()).get("response", "")).strip() or None
+        except Exception:
+            return None
 
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
         if intent == "vision.generate":
             return self._generate(payload)
         if intent == "vision.analyze":
+            import asyncio
+            import base64
+
+            img_b64 = payload.get("image_b64")
+            path = payload.get("image_path")
+            if not img_b64 and path:
+                try:
+                    with open(str(path), "rb") as fh:
+                        img_b64 = base64.b64encode(fh.read()).decode()
+                except Exception:
+                    img_b64 = None
+            if img_b64 and (self._backend or {}).get("ollama_vision"):
+                # REAL multimodal understanding of an actual image (e.g. a
+                # control.screenshot) via the local llava model.
+                desc = await asyncio.to_thread(
+                    self._analyze_real, str(img_b64),
+                    str(payload.get("prompt", "Describe this image in detail.")))
+                if desc:
+                    model = self._backend["ollama_vision"]
+                    return {"description": desc, "model": model,
+                            "_backend": f"ollama:{model}", "_mode": "real"}
             w = int(payload.get("width", 1024))
             h = int(payload.get("height", 1024))
             return {
@@ -62,6 +148,7 @@ class VisionOrgan(BaseOrgan):
                 "megapixels": round(w * h / 1_000_000, 2),
                 "aspect_ratio": round(w / h, 3) if h else 0.0,
                 "dominant_colors": ["#2b2d42", "#8d99ae", "#edf2f4"],
+                "_backend": "builtin", "_mode": "mock",
             }
         if intent == "vision.creative":
             return self._creative(str(payload.get("text", "SINGULARITY")), payload.get("color"),
