@@ -38,22 +38,74 @@ class NeuroOrgan(BaseOrgan):
                    {"text": "str"}),
     )
 
+    # Real LLM reasoning can be slow on a local model — give it room.
+    invoke_timeout_s = 120.0
+
     async def _attach_real(self) -> None:
-        # Real reasoning backends: Mythos' autonomous loop (runs offline with a
-        # stub LLM) and, when present + keyed, BRAINIAC's NeuroCore.
+        # Real reasoning backends, in order of capability: a local Ollama LLM
+        # (genuine generation, no cloud), Mythos' autonomous loop, and BRAINIAC's
+        # NeuroCore. Any one present makes the organ REAL.
         from ..kernel.bootstrap import try_import
 
         mythos = try_import("mythos")
         brainiac = try_import("brainiac")
-        if mythos is None and brainiac is None:
+        ollama = self._probe_ollama()
+        if mythos is None and brainiac is None and ollama is None:
             raise RuntimeError("no real reasoning backend available")
-        self._backend = {"mythos": mythos, "brainiac": brainiac}
+        self._backend = {"mythos": mythos, "brainiac": brainiac, "ollama": ollama}
         self._detail["mythos"] = mythos is not None
         self._detail["brainiac"] = brainiac is not None
+        self._detail["ollama"] = ollama or False
+
+    @staticmethod
+    def _probe_ollama() -> str | None:
+        """Return a usable local Ollama model name, or None. Prefers the smallest
+        model (most likely to fit in memory / respond fastest)."""
+        import json
+        import os
+        import urllib.request
+
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        forced = os.environ.get("JARVIS_OLLAMA_MODEL")
+        try:
+            with urllib.request.urlopen(f"{host}/api/tags", timeout=2) as r:
+                models = json.loads(r.read()).get("models", [])
+        except Exception:
+            return None
+        names = [m.get("name") for m in models if m.get("name")]
+        if not names:
+            return None
+        if forced and forced in names:
+            return forced
+        return sorted(models, key=lambda m: m.get("size", 1 << 62))[0].get("name")
+
+    def _ollama_generate(self, prompt: str, *, json_mode: bool = False,
+                         num_predict: int = 220) -> str | None:
+        """Real local generation via Ollama. None on any failure → builtin fallback."""
+        import json
+        import os
+        import urllib.request
+
+        model = (self._backend or {}).get("ollama")
+        if not model:
+            return None
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        body: dict[str, Any] = {"model": model, "prompt": prompt, "stream": False,
+                                "options": {"num_predict": num_predict, "temperature": 0.4}}
+        if json_mode:
+            body["format"] = "json"
+        try:
+            req = urllib.request.Request(
+                f"{host}/api/generate", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=110) as r:
+                return str(json.loads(r.read()).get("response", "")).strip() or None
+        except Exception:
+            return None
 
     # Backends whose presence in a result's ``_backend`` means it was genuinely
     # produced by real upstream code (vs. the deterministic builtin reasoner).
-    _REAL_BACKENDS = ("mythos", "brainiac", "neurocore")
+    _REAL_BACKENDS = ("mythos", "brainiac", "neurocore", "ollama")
 
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
         if intent == "neuro.think":
@@ -130,8 +182,18 @@ class NeuroOrgan(BaseOrgan):
                     "_backend": f"mythos:{provider}", "_usd": 0.0}
         return self._autonomous(goal, max_iterations)
 
-    # -- mock reasoning ---------------------------------------------------
+    # -- reasoning (real LLM when available, deterministic builtin otherwise) --
     def _think(self, prompt: str, depth: str) -> dict[str, Any]:
+        if (self._backend or {}).get("ollama"):
+            out = self._ollama_generate(
+                "You are JARVIS's reasoning core. Think about the request and give a "
+                f"concise, grounded answer (no preamble).\n\nRequest: {prompt}",
+                num_predict=256 if depth in ("deep", "supreme") else 160)
+            if out:
+                model = self._backend["ollama"]
+                return {"thought": out, "depth": depth, "model": model,
+                        "_usd": 0.0, "_backend": f"ollama:{model}"}
+
         keywords = _keywords(prompt)
         steps = [
             f"Frame the request: '{prompt[:80]}'",
@@ -156,6 +218,23 @@ class NeuroOrgan(BaseOrgan):
         }
 
     def _plan(self, goal: str, max_tasks: int) -> dict[str, Any]:
+        if (self._backend or {}).get("ollama"):
+            import json as _json
+
+            raw = self._ollama_generate(
+                f"Decompose this goal into at most {max_tasks} ordered, concrete tasks. "
+                'Respond ONLY as JSON: {"tasks":[{"id":1,"title":"...","depends_on":[]}]}.'
+                f"\n\nGoal: {goal}", json_mode=True, num_predict=320)
+            if raw:
+                try:
+                    tasks = (_json.loads(raw).get("tasks") or [])[:max_tasks]
+                except Exception:
+                    tasks = []
+                if tasks:
+                    model = self._backend["ollama"]
+                    return {"goal": goal, "tasks": tasks, "strategy": "llm-decomposed",
+                            "model": model, "_usd": 0.0, "_backend": f"ollama:{model}"}
+
         keywords = _keywords(goal) or ["objective"]
         verbs = ["analyse", "design", "build", "verify", "deliver"]
         tasks = []
