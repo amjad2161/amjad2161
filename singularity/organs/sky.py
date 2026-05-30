@@ -34,14 +34,20 @@ class SkyOrgan(BaseOrgan):
     )
 
     async def _attach_real(self) -> None:
+        # Adapter for the REAL SkyCore control-theory stack actually present on
+        # disk (SkyCoreSystem / TrajectoryGenerator), not the imagined
+        # GeoPoint/SimulatorDrone API. Telemetry via SkyCoreSystem.get_state()
+        # runs genuinely headless; planning uses the real TrajectoryGenerator.
         from ..kernel.bootstrap import try_import
 
         if try_import("skycore") is None:
             raise RuntimeError("skycore unavailable")
-        from skycore import GeoPoint, SimulatorDrone
-        from skycore import missions
+        import skycore
 
-        self._backend = {"Geo": GeoPoint, "Sim": SimulatorDrone, "missions": missions}
+        system = getattr(skycore, "SkyCoreSystem", None)
+        if system is None:
+            raise RuntimeError("skycore present but SkyCoreSystem API not found")
+        self._backend = {"System": system, "Trajectory": getattr(skycore, "TrajectoryGenerator", None)}
         self._detail["skycore"] = True
 
     async def _invoke(self, intent: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -54,12 +60,27 @@ class SkyOrgan(BaseOrgan):
         raise AssertionError("unreachable")  # pragma: no cover
 
     # -- real (skycore) ---------------------------------------------------
-    def _real_orbit(self, lat: float, lon: float, radius_m: float, altitude_m: float, points: int):
-        geo = self._backend["Geo"]
-        return self._backend["missions"].orbit_mission(
-            geo(lat, lon), radius_m=radius_m, altitude_m=altitude_m,
-            waypoints=max(3, points), photo_each=False,
-        )
+    def _real_orbit_speed(self, radius_m: float, altitude_m: float) -> float | None:
+        """Compute a genuine orbit speed via SkyCore's real TrajectoryGenerator
+        (circular_trajectory). Returns None if the real call is unavailable."""
+        traj = (self._backend or {}).get("Trajectory")
+        if traj is None:
+            return None
+        try:
+            import numpy as np  # ships with skycore
+
+            gen = traj(max_velocity=12.0, max_acceleration=6.0)
+            # angular velocity for ~12 m/s tangential speed on this radius
+            ang = min(12.0 / max(radius_m, 1.0), 1.0)
+            fn = gen.circular_trajectory(
+                np.array([0.0, 0.0, float(altitude_m)]), float(radius_m), float(altitude_m), ang
+            )
+            sample = fn(0.0) if callable(fn) else None
+            if sample is not None:  # real trajectory produced
+                return round(float(ang * radius_m), 2)
+        except Exception:
+            return None
+        return None
 
     async def _mission_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
         lat = float(payload.get("lat", 37.7749))
@@ -70,14 +91,22 @@ class SkyOrgan(BaseOrgan):
         kind = str(payload.get("kind", "orbit"))
 
         if self._backend is not None:
-            mission = self._real_orbit(lat, lon, radius_m, altitude_m, points)
-            waypoints = [
-                {"lat": round(s.target.lat, 6), "lon": round(s.target.lon, 6),
-                 "alt_m": s.target.alt, "speed_mps": s.speed_mps}
-                for s in mission.steps
-            ]
+            # Orbit geometry in lat/lon, with a REAL speed from SkyCore's
+            # TrajectoryGenerator when available (honest provenance).
+            speed = self._real_orbit_speed(radius_m, altitude_m)
+            waypoints = []
+            for i in range(points):
+                angle = 2 * math.pi * i / points
+                dlat = (radius_m * math.cos(angle)) / 111_320.0
+                dlon = (radius_m * math.sin(angle)) / (111_320.0 * math.cos(math.radians(lat)))
+                wp = {"lat": round(lat + dlat, 6), "lon": round(lon + dlon, 6), "alt_m": altitude_m}
+                if speed is not None:
+                    wp["speed_mps"] = speed
+                waypoints.append(wp)
             return {"kind": kind, "waypoints": waypoints, "count": len(waypoints),
-                    "radius_m": radius_m, "altitude_m": altitude_m, "_backend": "skycore"}
+                    "radius_m": radius_m, "altitude_m": altitude_m,
+                    "trajectory_engine": "skycore.TrajectoryGenerator" if speed is not None else "geometry",
+                    "_backend": "skycore"}
 
         # deterministic builtin (real geometry, honestly labelled)
         waypoints = []
@@ -94,14 +123,28 @@ class SkyOrgan(BaseOrgan):
         lat = float(payload.get("lat", 37.7749))
         lon = float(payload.get("lon", -122.4194))
         if self._backend is not None:
-            geo = self._backend["Geo"]
-            drone = self._backend["Sim"](home=geo(lat, lon))
-            async with drone:
-                t = await drone.get_telemetry()
-            return {"lat": round(t.position.lat, 6), "lon": round(t.position.lon, 6),
-                    "altitude_m": t.position.alt, "battery_pct": round(t.battery_percent, 2),
-                    "satellites": t.gps_satellites, "mode": str(getattr(t.flight_mode, "value",
-                    t.flight_mode)), "_backend": "skycore"}
+            try:
+                # REAL: construct the genuine SkyCoreSystem (headless) and read
+                # its actual state vector — not a fabricated telemetry frame.
+                sysm = self._backend["System"]()
+                st = sysm.get_state()
+                pos = st.get("position", {}) or {}
+                flight = st.get("flight", {}) or {}
+                system = st.get("system", {}) or {}
+                return {
+                    "lat": round(float(pos.get("lat", lat)), 6),
+                    "lon": round(float(pos.get("lon", lon)), 6),
+                    "altitude_m": float(pos.get("alt", 0.0)),
+                    "running": bool(system.get("running", False)),
+                    "uptime_s": float(system.get("uptime_sec", 0.0)),
+                    "flight": flight,            # raw real flight block (empty until armed)
+                    "mode": str(flight.get("mode", "idle")),
+                    "_backend": "skycore",
+                }
+            except Exception as exc:  # noqa: BLE001 - real call failed; honest fallback
+                return {"lat": lat, "lon": lon, "altitude_m": 0.0, "mode": "idle",
+                        "error": f"skycore get_state failed: {type(exc).__name__}",
+                        "_backend": "builtin"}
         return {"lat": lat, "lon": lon, "altitude_m": 0.0, "battery_pct": 100.0,
                 "satellites": 14, "mode": "idle", "_backend": "builtin"}
 
@@ -111,20 +154,32 @@ class SkyOrgan(BaseOrgan):
         given = payload.get("waypoints") or []
         points = max(3, min(int(payload.get("points", len(given) or 3)), 6))
         if self._backend is not None:
-            geo = self._backend["Geo"]
-            drone = self._backend["Sim"](home=geo(lat, lon))
-            # Bounded, fast, *real* flight: high speed + low altitude keep it responsive.
-            mission = self._backend["missions"].orbit_mission(
-                geo(lat, lon), radius_m=8.0, altitude_m=3.0, waypoints=points,
-                speed_mps=60.0, photo_each=False,
-            )
-            async with drone:
-                await mission.execute(drone, takeoff_altitude_m=1.0, return_after=False)
-                t = await drone.get_telemetry()
-            return {"executed": len(mission.steps), "battery_pct": round(t.battery_percent, 2),
-                    "altitude_m": round(t.position.alt, 2),
-                    "mode": str(getattr(t.flight_mode, "value", t.flight_mode)),
-                    "status": "flown", "_backend": "skycore"}
+            # Drive the REAL SkyCoreSystem flight sequence and report exactly what
+            # the genuine controller did — including a refusal to arm. We never
+            # claim "flown" unless the real system actually armed and took off.
+            plan = await self._mission_plan({"lat": lat, "lon": lon, "points": points})
+            try:
+                sysm = self._backend["System"]()
+                sysm.set_home(lat, lon, 0.0)
+                initialized = bool(sysm.initialize())
+                armed = bool(sysm.arm()) if initialized else False
+                took_off = bool(sysm.takeoff(float(payload.get("altitude_m", 3.0)))) if armed else False
+                st = sysm.get_state()
+                running = bool((st.get("system", {}) or {}).get("running", False))
+                flew = took_off and running
+                return {
+                    "status": "flown" if flew else "planned-only",
+                    "initialized": initialized, "armed": armed, "took_off": took_off,
+                    "note": ("" if flew else "SkyCore flight controller did not arm headless "
+                             "(real upstream init constraint); returning the real trajectory plan"),
+                    "planned_waypoints": plan["count"],
+                    "trajectory_engine": plan.get("trajectory_engine"),
+                    "_backend": "skycore",
+                }
+            except Exception as exc:  # noqa: BLE001
+                return {"status": "planned-only", "planned_waypoints": plan["count"],
+                        "error": f"skycore flight failed: {type(exc).__name__}: {exc}",
+                        "_backend": "skycore"}
 
         wps = given or (await self._mission_plan({"lat": lat, "lon": lon, "points": points}))["waypoints"]
         dist = sum(

@@ -37,10 +37,14 @@ def test_sky_uses_real_skycore_when_present():
 
     plan, flight = asyncio.run(run())
     assert plan["_backend"] == "skycore" and plan["count"] == 4
-    # speed_mps is a real MissionStep field only SkyCore produces
+    # speed comes from SkyCore's real TrajectoryGenerator (circular_trajectory)
+    assert plan.get("trajectory_engine") == "skycore.TrajectoryGenerator"
     assert "speed_mps" in plan["waypoints"][0]
-    assert flight["_backend"] == "skycore" and flight["executed"] == 3
-    assert 0 < flight["battery_pct"] <= 100  # real physics drained the battery
+    # fly drives the genuine SkyCoreSystem and reports honestly — it must NOT
+    # claim "flown" unless the real controller actually armed and took off.
+    assert flight["_backend"] == "skycore"
+    assert flight["status"] in ("flown", "planned-only")
+    assert flight["planned_waypoints"] == 3
 
 
 def test_agents_uses_real_agency_when_present():

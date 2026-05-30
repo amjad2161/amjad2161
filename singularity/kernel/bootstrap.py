@@ -20,8 +20,11 @@ from types import ModuleType
 
 # package import-name -> repo-relative path(s) that must be on sys.path
 _SIBLINGS: dict[str, tuple[str, ...]] = {
-    "skycore": ("Dji-owner",),
-    "agency": ("agency-agents/runtime",),
+    # Each name may live under several repo-relative paths; the first that
+    # exists wins. "SkyCore" is the real drone repo checkout name (the skycore
+    # package sits directly inside it).
+    "skycore": ("Dji-owner", "SkyCore"),
+    "agency": ("agency-agents/runtime", "agency/runtime"),
     "mythos": ("Mythos",),
     "brainiac": ("amjad2161",),
 }
