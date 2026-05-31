@@ -182,6 +182,14 @@ def _cmd_jarvis(goal: str, use_voice: bool, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_crew(goal: str, size: int, force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        return await kernel.route("agents.crew", {"goal": goal, "size": size})
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_doctor(force_mock: bool) -> int:
     import importlib.util
     import platform
@@ -353,6 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_jarvis.add_argument("--voice", action="store_true",
                           help="speak the conclusion (if a voice backend is present)")
 
+    p_crew = sub.add_parser(
+        "crew", help="a CREW of specialist personas tackles a goal IN PARALLEL")
+    p_crew.add_argument("goal")
+    p_crew.add_argument("--size", type=int, default=3, help="number of specialists (2-4)")
+
     sub.add_parser("context", help="show the live adaptive context (time / state / memory)")
 
     p_sentinel = sub.add_parser(
@@ -426,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pulse(args.goal, force_mock)
     if args.command == "jarvis":
         return _cmd_jarvis(args.goal, args.voice, force_mock)
+    if args.command == "crew":
+        return _cmd_crew(args.goal, args.size, force_mock)
     if args.command == "context":
         return _cmd_context(force_mock)
     if args.command == "sentinel":

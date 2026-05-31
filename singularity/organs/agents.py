@@ -41,6 +41,8 @@ class AgentsOrgan(BaseOrgan):
         Capability("agents.route", "Pick the best persona for a request.", {"request": "str"}),
         Capability("agents.run", "Run a persona against a request.",
                    {"request": "str", "persona": "str?"}),
+        Capability("agents.crew", "Run a crew of the top specialist personas on a goal IN PARALLEL.",
+                   {"goal": "str", "size": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -90,7 +92,62 @@ class AgentsOrgan(BaseOrgan):
                 "_backend": backend,
                 "_mode": "real" if "ollama" in backend else "mock",
             }
+        if intent == "agents.crew":
+            return await self._crew(str(payload.get("goal", "")),
+                                    int(payload.get("size") or 3))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    async def _crew(self, goal: str, size: int) -> dict[str, Any]:
+        """A CREW of specialists tackles the goal IN PARALLEL — each from its own
+        expertise — then their deliverables are returned together. This is the
+        'army of sub-agents' under JARVIS: real delegation, real concurrency."""
+        import asyncio
+
+        size = max(2, min(size, 4))
+        # Pick the lead (best match) + the next-best distinct specialists. The
+        # candidate pool blends the router's shortlist with registry-wide keyword
+        # matches, so a real team forms in both real and mock modes.
+        routed = self._route(goal)
+        lead = routed.get("persona", "jarvis-supreme")
+        pool = [lead, *routed.get("shortlist", []), *self._top_personas(goal, size + 2),
+                "jarvis-supreme", "research-analyst", "qa-engineer"]
+        members = list(dict.fromkeys(p for p in pool if p))[:size]
+
+        if self._backend is None:  # deterministic mock: who WOULD be assigned
+            return {"goal": goal, "lead": lead, "crew_size": len(members),
+                    "crew": [{"persona": m, "deliverable": f"[{m}] would handle: {goal[:60]}"}
+                             for m in members], "_backend": "builtin", "_mode": "mock"}
+
+        async def run_one(slug: str) -> dict[str, Any]:
+            out = await asyncio.to_thread(self._run_persona, slug, goal)
+            return {"persona": slug, "deliverable": out or f"[{slug}] (no local LLM)",
+                    "real": bool(out)}
+
+        crew = list(await asyncio.gather(*(run_one(m) for m in members)))
+        real = any(c["real"] for c in crew)
+        return {"goal": goal, "lead": lead, "crew_size": len(crew), "crew": crew,
+                "parallel": True, "_backend": "agency+ollama" if real else "agency",
+                "_mode": "real" if real else "mock"}
+
+    def _top_personas(self, goal: str, n: int) -> list[str]:
+        """Top-N specialists for a goal, scored by keyword overlap against the
+        live registry of 324 personas (their name + description)."""
+        if self._backend is None:
+            return []
+        import re
+
+        terms = {t for t in re.findall(r"[a-z]{3,}", goal.lower())}
+        scored: list[tuple[int, str]] = []
+        for s in self._backend["registry"].all():
+            slug = getattr(s, "slug", "")
+            if not slug:
+                continue
+            text = f"{slug} {getattr(s, 'name', '')} {getattr(s, 'description', '')}".lower()
+            score = sum(1 for t in terms if t in text)
+            if score:
+                scored.append((score, slug))
+        scored.sort(key=lambda it: it[0], reverse=True)
+        return [slug for _, slug in scored[:n]]
 
     def _find_skill(self, slug: str) -> Any:
         if self._backend is None:
