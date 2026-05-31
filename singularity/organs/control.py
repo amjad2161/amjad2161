@@ -33,7 +33,7 @@ class ControlOrgan(BaseOrgan):
     domain = Domain.ACTUATION
     title = "Control — browser / GUI / device automation"
     vision = "Give the organism hands: drive browsers, GUIs and devices toward a goal."
-    invoke_timeout_s = 20.0
+    invoke_timeout_s = 220.0  # control.act runs a screenshot -> vision -> LLM loop
     capabilities = (
         Capability("control.browse", "Fetch a URL (real HTTP GET): status, title, text snippet.",
                    {"url": "str"}),
@@ -46,6 +46,9 @@ class ControlOrgan(BaseOrgan):
                    {"name": "str?"}),
         Capability("control.speak", "Voice: speak text aloud (Windows SAPI / pyttsx3).",
                    {"text": "str"}),
+        Capability("control.act", "Computer-use agent: perceive the screen and decide the next "
+                   "UI action toward a goal (UI-TARS/Agent-S); keyboard execution when execute=true.",
+                   {"goal": "str", "execute": "bool?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -79,7 +82,101 @@ class ControlOrgan(BaseOrgan):
             return await asyncio.to_thread(self._screenshot, str(payload.get("name", "screenshot")))
         if intent == "control.speak":
             return await asyncio.to_thread(self._speak, str(payload.get("text", "")))
+        if intent == "control.act":
+            return await asyncio.to_thread(
+                self._act, str(payload.get("goal", "")), bool(payload.get("execute", False)))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _act(self, goal: str, execute: bool) -> dict[str, Any]:
+        """Computer-use agent (UI-TARS / Agent-S): PERCEIVE the real screen with a
+        multimodal model, DECIDE the next UI action with the reasoning model, and
+        (only when execute=true) carry out safe keyboard actions. Clicking is
+        proposed but needs pixel coordinates a description model can't give
+        reliably — reported honestly rather than guessed."""
+        import base64
+        import io
+        import json
+        import os
+        import urllib.request
+
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+        def _ollama(body: dict[str, Any], timeout: float) -> str | None:
+            try:
+                req = urllib.request.Request(
+                    f"{host}/api/generate", data=json.dumps(body).encode(),
+                    headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=timeout) as r:
+                    return str(json.loads(r.read()).get("response", "")).strip() or None
+            except Exception:
+                return None
+
+        # 1) PERCEIVE — screenshot + a vision model description.
+        try:
+            import pyautogui
+
+            from PIL import Image  # noqa: F401  (ensures Pillow is present)
+        except Exception:
+            return {"ok": False, "error": "pyautogui/Pillow not available", "_backend": "builtin"}
+        try:
+            from .neuro import NeuroOrgan
+            from .vision import VisionOrgan
+        except Exception:
+            return {"ok": False, "error": "organ imports failed", "_backend": "builtin"}
+
+        text_model = NeuroOrgan._probe_ollama()
+        vision_model = VisionOrgan._probe_ollama_vision()
+        if not text_model:
+            return {"ok": False, "error": "no local LLM (Ollama) for decision", "_backend": "builtin"}
+
+        img = pyautogui.screenshot()
+        img.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        screen = "(no vision model)"
+        if vision_model:
+            screen = _ollama({"model": vision_model, "images": [b64], "stream": False,
+                              "prompt": "Briefly describe this screen and its main clickable "
+                                        "elements (apps, buttons, fields).",
+                              "options": {"num_predict": 160}}, 170) or screen
+
+        # 2) DECIDE — the reasoning model proposes the single next action.
+        raw = _ollama({"model": text_model, "stream": False, "format": "json",
+                       "prompt": f"Goal: {goal}\nScreen: {screen}\nDecide the SINGLE next UI "
+                                 'action. Respond ONLY JSON: {"action":"click|type|press|'
+                                 'hotkey|scroll|done","target":"...","text":"...","reason":"..."}',
+                       "options": {"num_predict": 160}}, 120)
+        action: dict[str, Any] = {}
+        try:
+            action = json.loads(raw) if raw else {}
+        except Exception:
+            action = {"action": "done", "reason": (raw or "")[:120]}
+
+        # 3) EXECUTE — only safe keyboard actions, only when asked.
+        executed = None
+        kind = str(action.get("action", "")).lower()
+        if execute and kind in ("type", "press", "hotkey", "scroll"):
+            try:
+                if kind == "type":
+                    pyautogui.write(str(action.get("text", "")), interval=0.02)
+                elif kind == "press":
+                    pyautogui.press(str(action.get("target") or action.get("text", "enter")))
+                elif kind == "hotkey":
+                    keys = str(action.get("target", "")).replace(" ", "").split("+")
+                    pyautogui.hotkey(*[k for k in keys if k])
+                elif kind == "scroll":
+                    pyautogui.scroll(-300)
+                executed = kind
+            except Exception as exc:  # noqa: BLE001
+                executed = f"failed: {type(exc).__name__}"
+        note = None
+        if kind == "click" and execute:
+            note = "click proposed but not executed — needs pixel coordinates a description model cannot give"
+        return {"ok": True, "goal": goal, "screen_summary": screen[:200],
+                "proposed_action": action, "executed": executed, "note": note,
+                "vision_model": vision_model, "text_model": text_model,
+                "_backend": "ui-tars-loop"}
 
     # -- real perception + voice (merged from the local JARVIS computer-use) ---
     def _screen_info(self) -> dict[str, Any]:
