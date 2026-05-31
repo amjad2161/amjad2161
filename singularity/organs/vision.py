@@ -43,6 +43,8 @@ class VisionOrgan(BaseOrgan):
                    {"camera": "int?"}),
         Capability("vision.watch", "Watch the camera for presence + motion (frigate/DeepCamera style).",
                    {"camera": "int?", "frames": "int?"}),
+        Capability("vision.colors", "OmniVision: extract dominant colors from an image (k-means).",
+                   {"image_path": "str?", "image_b64": "str?", "k": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -171,7 +173,48 @@ class VisionOrgan(BaseOrgan):
 
             return await asyncio.to_thread(
                 self._watch, int(payload.get("camera", 0)), int(payload.get("frames", 6)))
+        if intent == "vision.colors":
+            import asyncio
+
+            return await asyncio.to_thread(
+                self._colors, payload.get("image_path"), payload.get("image_b64"),
+                int(payload.get("k", 5)))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _colors(self, image_path: Any, image_b64: Any, k: int) -> dict[str, Any]:
+        """OmniVision: REAL dominant-color extraction via k-means (cv2)."""
+        import base64
+
+        try:
+            import cv2
+            import numpy as np
+        except Exception:
+            return {"ok": False, "error": "opencv (cv2) not available", "_backend": "builtin"}
+        try:
+            if image_b64:
+                buf = np.frombuffer(base64.b64decode(str(image_b64)), dtype=np.uint8)
+                img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+            elif image_path:
+                img = cv2.imread(str(image_path))
+            else:
+                return {"ok": False, "error": "provide image_path or image_b64", "_backend": "builtin"}
+            if img is None:
+                return {"ok": False, "error": "could not decode image", "_backend": "builtin"}
+            small = cv2.resize(img, (96, 96))
+            data = small.reshape(-1, 3).astype(np.float32)
+            k = max(2, min(k, 8))
+            crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
+            _, labels, centers = cv2.kmeans(data, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+            counts = np.bincount(labels.flatten(), minlength=k)
+            order = np.argsort(-counts)
+            colors = []
+            for i in order:
+                b, g, r = (int(c) for c in centers[i])  # cv2 is BGR
+                colors.append({"hex": f"#{r:02x}{g:02x}{b:02x}",
+                               "weight": round(float(counts[i]) / len(labels), 3)})
+            return {"ok": True, "dominant_colors": colors, "_backend": "omnivision-kmeans"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "_backend": "builtin"}
 
     def _watch(self, camera: int, frames: int) -> dict[str, Any]:
         """REAL: watch the camera for a short burst and report PRESENCE + MOTION

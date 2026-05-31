@@ -37,6 +37,10 @@ class NexusOrgan(BaseOrgan):
                    {"record": "dict"}),
         Capability("nexus.guard", "Scan text for injection / unsafe content.",
                    {"text": "str", "source_ip": "str?"}),
+        Capability("nexus.sign", "CyberShield: HMAC-sign or verify a payload (tamper-evidence).",
+                   {"text": "str", "key": "str?", "verify": "str?"}),
+        Capability("nexus.hash", "CyberShield: content hash (sha256) for integrity checks.",
+                   {"text": "str", "algo": "str?"}),
     )
 
     def __init__(self, *, force_mock: bool = False) -> None:
@@ -108,7 +112,33 @@ class NexusOrgan(BaseOrgan):
                     "_backend": "builtin"}
         if intent == "nexus.guard":
             return self._guard(str(payload.get("text", "")))
+        if intent == "nexus.sign":
+            return self._sign(str(payload.get("text", "")), payload.get("key"), payload.get("verify"))
+        if intent == "nexus.hash":
+            return self._hash(str(payload.get("text", "")), str(payload.get("algo", "sha256")))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _sign(self, text: str, key: Any, verify: Any) -> dict[str, Any]:
+        """CyberShield: HMAC-SHA256 sign (real, stdlib) — or verify a presented MAC
+        in constant time. Key from payload or SINGULARITY_HMAC_KEY env."""
+        import hashlib
+        import hmac
+        import os
+
+        secret = str(key or os.environ.get("SINGULARITY_HMAC_KEY", "singularity")).encode()
+        mac = hmac.new(secret, text.encode(), hashlib.sha256).hexdigest()
+        if verify is not None:
+            ok = hmac.compare_digest(mac, str(verify))
+            return {"verified": ok, "_backend": "cybershield-hmac"}
+        return {"hmac_sha256": mac, "len": len(text), "_backend": "cybershield-hmac"}
+
+    def _hash(self, text: str, algo: str) -> dict[str, Any]:
+        import hashlib
+
+        algo = algo if algo in hashlib.algorithms_guaranteed else "sha256"
+        digest = hashlib.new(algo, text.encode()).hexdigest()
+        return {"algo": algo, "hash": digest, "bytes": len(text.encode()),
+                "_backend": "cybershield-hash"}
 
     def _telemetry(self, sensor: str, value: float) -> dict[str, Any]:
         if self._db is not None:

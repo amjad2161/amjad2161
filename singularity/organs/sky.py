@@ -31,6 +31,9 @@ class SkyOrgan(BaseOrgan):
         Capability("sky.telemetry", "Sample current drone telemetry.", {}),
         Capability("sky.fly", "Execute a (bounded, real) mission and report the flight.",
                    {"lat": "float?", "lon": "float?", "points": "int?", "waypoints": "list?"}),
+        Capability("sky.navigate", "Real route + ETA between two points (OrbitalNav / OSRM, no key).",
+                   {"from_lat": "float", "from_lon": "float", "to_lat": "float", "to_lon": "float",
+                    "profile": "str?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -57,7 +60,43 @@ class SkyOrgan(BaseOrgan):
             return await self._telemetry(payload)
         if intent == "sky.fly":
             return await self._fly(payload)
+        if intent == "sky.navigate":
+            import asyncio
+
+            return await asyncio.to_thread(
+                self._navigate,
+                float(payload.get("from_lat", 32.08)), float(payload.get("from_lon", 34.78)),
+                float(payload.get("to_lat", 29.55)), float(payload.get("to_lon", 34.95)),
+                str(payload.get("profile", "driving")))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _navigate(self, flat: float, flon: float, tlat: float, tlon: float,
+                  profile: str) -> dict[str, Any]:
+        """OrbitalNav: REAL route + ETA via the public OSRM server (no key).
+        Falls back to great-circle distance when egress is blocked."""
+        import json
+        import math
+        import urllib.request
+
+        prof = profile if profile in ("driving", "walking", "cycling") else "driving"
+        url = (f"https://router.project-osrm.org/route/v1/{prof}/"
+               f"{flon},{flat};{tlon},{tlat}?overview=false")
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:  # noqa: S310
+                data = json.loads(r.read())
+            rt = data["routes"][0]
+            return {"profile": prof, "distance_km": round(rt["distance"] / 1000, 1),
+                    "eta_min": round(rt["duration"] / 60, 1), "eta_h": round(rt["duration"] / 3600, 2),
+                    "_backend": "osrm"}
+        except Exception:
+            # great-circle fallback (real geometry, honestly labelled)
+            r_e = 6371.0
+            dlat, dlon = math.radians(tlat - flat), math.radians(tlon - flon)
+            a = (math.sin(dlat / 2) ** 2 + math.cos(math.radians(flat))
+                 * math.cos(math.radians(tlat)) * math.sin(dlon / 2) ** 2)
+            km = round(2 * r_e * math.asin(math.sqrt(a)), 1)
+            return {"profile": prof, "distance_km": km, "eta_min": round(km / 80 * 60, 1),
+                    "note": "great-circle estimate (OSRM unreachable)", "_backend": "builtin-geo"}
 
     # -- real (skycore) ---------------------------------------------------
     def _real_orbit_speed(self, radius_m: float, altitude_m: float) -> float | None:
