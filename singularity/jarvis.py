@@ -89,8 +89,16 @@ class Jarvis:
     # -- the loop --------------------------------------------------------------
     async def command(self, goal: str, *, max_tasks: int = 5) -> dict[str, Any]:
         """Plan -> parallel multi-organ execute -> synthesise -> (speak)."""
-        # 1) PLAN with the real reasoning core.
-        plan = await self.kernel.route("neuro.plan", {"goal": goal, "max_tasks": max_tasks})
+        # 1) PLAN with the real reasoning core, conditioned on self-edited memory
+        # (MemGPT/letta style) so accumulated lessons shape what JARVIS plans.
+        mem = ""
+        if self.evolver is not None:
+            try:
+                mem = self.evolver.store.memory_render()
+            except Exception:
+                mem = ""
+        plan_goal = f"What I remember:\n{mem}\n\nGoal: {goal}" if mem else goal
+        plan = await self.kernel.route("neuro.plan", {"goal": plan_goal, "max_tasks": max_tasks})
         tasks = plan.get("tasks", []) or [{"title": goal}]
         titles = [str(t.get("title", t) if isinstance(t, dict) else t) for t in tasks]
 

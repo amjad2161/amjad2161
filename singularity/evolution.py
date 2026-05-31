@@ -50,9 +50,47 @@ class ExperienceStore:
             "CREATE TABLE IF NOT EXISTS routing(term TEXT, organ TEXT, score REAL,"
             " n INTEGER, PRIMARY KEY(term,organ));"
             "CREATE TABLE IF NOT EXISTS lessons(ts REAL, lesson TEXT);"
+            "CREATE TABLE IF NOT EXISTS core_memory(block TEXT PRIMARY KEY, content TEXT);"
         )
         self.db.commit()
         self.path = path
+        self._seed_core_memory()
+
+    # -- MemGPT-style self-editing core memory (letta) -----------------------
+    def _seed_core_memory(self) -> None:
+        defaults = {
+            "persona": "I am JARVIS — a unified federation of nine real organs. "
+                       "I plan with my reasoning core, act across organs in parallel, "
+                       "and learn from every run.",
+            "human": "",          # durable facts the agent learns about its operator
+            "directives": "",     # standing lessons that should shape future planning
+        }
+        for block, content in defaults.items():
+            self.db.execute(
+                "INSERT OR IGNORE INTO core_memory(block,content) VALUES (?,?)", (block, content))
+        self.db.commit()
+
+    def memory_get(self, block: str) -> str:
+        row = self.db.execute(
+            "SELECT content FROM core_memory WHERE block=?", (block,)).fetchone()
+        return str(row[0]) if row else ""
+
+    def memory_set(self, block: str, content: str) -> None:
+        self.db.execute(
+            "INSERT INTO core_memory(block,content) VALUES (?,?) "
+            "ON CONFLICT(block) DO UPDATE SET content=excluded.content", (block, content[:4000]))
+        self.db.commit()
+
+    def memory_append(self, block: str, text: str, *, cap: int = 4000) -> None:
+        cur = self.memory_get(block)
+        merged = (cur + "\n- " + text).strip() if cur else "- " + text
+        self.memory_set(block, merged[-cap:])
+
+    def memory_render(self) -> str:
+        """The self-edited memory the planner should be conditioned on."""
+        rows = self.db.execute("SELECT block,content FROM core_memory").fetchall()
+        parts = [f"{b.upper()}:\n{c}" for b, c in rows if c]
+        return "\n\n".join(parts)
 
     # -- experience ----------------------------------------------------------
     def record(self, goal: str, plan: list[str], organs: list[str],
@@ -147,6 +185,9 @@ class Evolver:
         lesson = str(out.get("thought", "")).strip()
         if lesson:
             self.store.add_lesson(lesson)
+            # Self-edit core memory: the lesson becomes a standing directive that
+            # conditions FUTURE planning — closing the learn->act->learn loop.
+            self.store.memory_append("directives", lesson[:240])
             try:  # also persist into the kernel's long-term memory if available
                 kernel.memory.remember(lesson, role="evolver", sid="evolution", intent="lesson")
             except Exception:

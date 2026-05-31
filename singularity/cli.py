@@ -108,6 +108,23 @@ def _cmd_autopilot(goal: str, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_memory(block: str | None, content: str | None) -> int:
+    from .evolution import ExperienceStore
+
+    store = ExperienceStore()
+    try:
+        if block and content is not None:
+            store.memory_set(block, content)
+            print(f"core memory '{block}' updated")
+        elif block:
+            print(store.memory_get(block))
+        else:
+            print(store.memory_render() or "(core memory is empty)")
+    finally:
+        store.close()
+    return 0
+
+
 def _cmd_evolve(interval: float, cycles: int | None, objectives: list[str],
                 force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
@@ -313,6 +330,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_jarvis.add_argument("--voice", action="store_true",
                           help="speak the conclusion (if a voice backend is present)")
 
+    p_memory = sub.add_parser(
+        "memory", help="view/edit JARVIS core memory (MemGPT/letta-style self-edited memory)")
+    p_memory.add_argument("block", nargs="?", default=None, help="persona | human | directives")
+    p_memory.add_argument("content", nargs="?", default=None, help="set the block to this content")
+
     p_evolve = sub.add_parser(
         "evolve", help="24/7 self-learning: pursue goals, reflect, re-discover, improve routing")
     p_evolve.add_argument("objectives", nargs="*", help="standing goals to pursue each cycle")
@@ -372,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pulse(args.goal, force_mock)
     if args.command == "jarvis":
         return _cmd_jarvis(args.goal, args.voice, force_mock)
+    if args.command == "memory":
+        return _cmd_memory(args.block, args.content)
     if args.command == "evolve":
         objs = args.objectives or ["scan the market", "audit my skills for gaps"]
         return _cmd_evolve(args.interval, args.cycles, objs, force_mock)

@@ -34,6 +34,21 @@ def test_evolver_observe_records_and_reinforces(tmp_path: object) -> None:
     store.close()
 
 
+def test_core_memory_persists_and_self_edits(tmp_path: object) -> None:
+    store = ExperienceStore(str(tmp_path / "ev.db"))   # type: ignore[operator]
+    assert "JARVIS" in store.memory_get("persona")     # seeded persona
+    store.memory_append("directives", "prefer the trade organ for market goals")
+    store.memory_append("human", "the operator is building JARVIS")
+    rendered = store.memory_render()
+    assert "DIRECTIVES" in rendered and "prefer the trade organ" in rendered
+    assert "HUMAN" in rendered and "building JARVIS" in rendered
+    store.close()
+    # persists across reopen (durable, like letta/MemGPT)
+    store2 = ExperienceStore(str(tmp_path / "ev.db"))  # type: ignore[operator]
+    assert "prefer the trade organ" in store2.memory_render()
+    store2.close()
+
+
 def test_jarvis_with_evolver_records_experience(tmp_path: object) -> None:
     store = ExperienceStore(str(tmp_path / "ev.db"))   # type: ignore[operator]
 
