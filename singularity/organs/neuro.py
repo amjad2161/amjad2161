@@ -36,6 +36,8 @@ class NeuroOrgan(BaseOrgan):
                    {"goal": "str", "max_iterations": "int?"}),
         Capability("neuro.humanize", "Strip common AI-writing tells from text (humanizer).",
                    {"text": "str"}),
+        Capability("neuro.translate", "SonicMatrix: detect language + translate text (local LLM).",
+                   {"text": "str", "to": "str?"}),
     )
 
     # Real LLM reasoning can be slow on a local model — give it room.
@@ -118,6 +120,8 @@ class NeuroOrgan(BaseOrgan):
             )
         elif intent == "neuro.humanize":
             result = self._humanize(str(payload.get("text", "")))
+        elif intent == "neuro.translate":
+            result = self._translate(str(payload.get("text", "")), str(payload.get("to", "English")))
         else:
             raise AssertionError("unreachable")  # pragma: no cover
 
@@ -129,6 +133,39 @@ class NeuroOrgan(BaseOrgan):
         backend = str(result.get("_backend", ""))
         result["_mode"] = "real" if backend.startswith(self._REAL_BACKENDS) else "mock"
         return result
+
+    @staticmethod
+    def _detect_language(text: str) -> str:
+        """SonicMatrix: lightweight script-based language detection (no deps)."""
+        for ch in text:
+            o = ord(ch)
+            if 0x0590 <= o <= 0x05FF:
+                return "Hebrew"
+            if 0x0600 <= o <= 0x06FF:
+                return "Arabic"
+            if 0x0400 <= o <= 0x04FF:
+                return "Russian"
+            if 0x4E00 <= o <= 0x9FFF:
+                return "Chinese"
+            if 0x3040 <= o <= 0x30FF:
+                return "Japanese"
+            if 0x0370 <= o <= 0x03FF:
+                return "Greek"
+        return "English/Latin"
+
+    def _translate(self, text: str, target: str) -> dict[str, Any]:
+        """SonicMatrix: detect the source language and translate via the local LLM."""
+        source = self._detect_language(text)
+        if (self._backend or {}).get("ollama"):
+            out = self._ollama_generate(
+                f"Translate the following text into {target}. Output ONLY the translation, "
+                f"no preamble.\n\nText: {text}", num_predict=200)
+            if out:
+                model = self._backend["ollama"]
+                return {"source_language": source, "target": target, "original": text,
+                        "translation": out, "_backend": f"ollama:{model}"}
+        return {"source_language": source, "target": target, "original": text,
+                "translation": text, "note": "no LLM backend; echoed", "_backend": "builtin"}
 
     def _humanize(self, text: str) -> dict[str, Any]:
         original = text

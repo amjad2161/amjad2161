@@ -34,6 +34,10 @@ class SkyOrgan(BaseOrgan):
         Capability("sky.navigate", "Real route + ETA between two points (OrbitalNav / OSRM, no key).",
                    {"from_lat": "float", "from_lon": "float", "to_lat": "float", "to_lon": "float",
                     "profile": "str?"}),
+        Capability("sky.satellite", "SatLink: live ISS position + distance/overhead from you (no key).",
+                   {"lat": "float?", "lon": "float?"}),
+        Capability("sky.sos", "SatLink: broadcast a structured SOS emergency packet.",
+                   {"lat": "float?", "lon": "float?", "message": "str?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -68,7 +72,58 @@ class SkyOrgan(BaseOrgan):
                 float(payload.get("from_lat", 32.08)), float(payload.get("from_lon", 34.78)),
                 float(payload.get("to_lat", 29.55)), float(payload.get("to_lon", 34.95)),
                 str(payload.get("profile", "driving")))
+        if intent == "sky.satellite":
+            import asyncio
+
+            return await asyncio.to_thread(
+                self._satellite, float(payload.get("lat", 32.08)), float(payload.get("lon", 34.78)))
+        if intent == "sky.sos":
+            return self._sos(float(payload.get("lat", 32.08)), float(payload.get("lon", 34.78)),
+                             str(payload.get("message", "SOS — assistance required")))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _satellite(self, lat: float, lon: float) -> dict[str, Any]:
+        """SatLink: REAL live ISS position (public APIs, no key) + great-circle
+        distance from the observer; flags an overhead pass (< ~1000 km)."""
+        import json
+        import math
+        import urllib.request
+
+        def _haversine(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float:
+            dlat, dlon = math.radians(b_lat - a_lat), math.radians(b_lon - a_lon)
+            h = (math.sin(dlat / 2) ** 2 + math.cos(math.radians(a_lat))
+                 * math.cos(math.radians(b_lat)) * math.sin(dlon / 2) ** 2)
+            return 2 * 6371.0 * math.asin(math.sqrt(h))
+
+        for url, parse in (
+            ("https://api.wheretheiss.at/v1/satellites/25544",
+             lambda d: (float(d["latitude"]), float(d["longitude"]), float(d.get("altitude", 420)))),
+            ("http://api.open-notify.org/iss-now.json",
+             lambda d: (float(d["iss_position"]["latitude"]),
+                        float(d["iss_position"]["longitude"]), 420.0)),
+        ):
+            try:
+                with urllib.request.urlopen(url, timeout=8) as r:  # noqa: S310
+                    ilat, ilon, alt = parse(json.loads(r.read()))
+                dist = round(_haversine(lat, lon, ilat, ilon), 1)
+                return {"satellite": "ISS (25544)", "iss_lat": round(ilat, 3),
+                        "iss_lon": round(ilon, 3), "altitude_km": round(alt, 1),
+                        "ground_distance_km": dist, "overhead": dist < 1000,
+                        "_backend": "satlink"}
+            except Exception:
+                continue
+        return {"satellite": "ISS (25544)", "error": "no satellite feed reachable",
+                "_backend": "builtin"}
+
+    def _sos(self, lat: float, lon: float, message: str) -> dict[str, Any]:
+        """SatLink: build a structured SOS broadcast packet (the federation's
+        nervous system carries it as a signal when routed)."""
+        import hashlib
+
+        beacon = hashlib.sha256(f"{lat},{lon},{message}".encode()).hexdigest()[:12]
+        return {"sos": True, "priority": "EMERGENCY", "position": {"lat": lat, "lon": lon},
+                "message": message[:200], "beacon_id": beacon,
+                "channels": ["satellite", "mesh", "broadcast"], "_backend": "satlink-sos"}
 
     def _navigate(self, flat: float, flon: float, tlat: float, tlon: float,
                   profile: str) -> dict[str, Any]:
