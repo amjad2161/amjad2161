@@ -41,6 +41,8 @@ class VisionOrgan(BaseOrgan):
                    {"prompt": "str", "count": "int?"}),
         Capability("vision.face_track", "See and locate a face via the webcam (robot-head eyes).",
                    {"camera": "int?"}),
+        Capability("vision.watch", "Watch the camera for presence + motion (frigate/DeepCamera style).",
+                   {"camera": "int?", "frames": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -164,7 +166,56 @@ class VisionOrgan(BaseOrgan):
             import asyncio
 
             return await asyncio.to_thread(self._face_track, int(payload.get("camera", 0)))
+        if intent == "vision.watch":
+            import asyncio
+
+            return await asyncio.to_thread(
+                self._watch, int(payload.get("camera", 0)), int(payload.get("frames", 6)))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _watch(self, camera: int, frames: int) -> dict[str, Any]:
+        """REAL: watch the camera for a short burst and report PRESENCE + MOTION
+        — the distilled concept behind frigate / DeepCamera (an AI camera that
+        notices movement and people). Motion via frame-differencing (no model);
+        presence via the built-in face cascade. Honest fallback without cv2/cam."""
+        try:
+            import cv2
+            import numpy as np
+        except Exception:
+            return {"ok": False, "error": "opencv (cv2) not available", "_backend": "builtin"}
+        cap = None
+        try:
+            cap = cv2.VideoCapture(camera)
+            grays: list[Any] = []
+            last = None
+            for _ in range(max(2, min(frames, 30))):
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
+                last = frame
+                grays.append(cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (21, 21), 0))
+            if len(grays) < 2 or last is None:
+                return {"ok": False, "error": f"insufficient frames from camera {camera}",
+                        "_backend": "builtin"}
+            # motion = mean abs diff across consecutive frames (0..255 -> 0..1)
+            diffs = [float(np.mean(cv2.absdiff(grays[i], grays[i - 1]))) for i in range(1, len(grays))]
+            level = round(max(diffs) / 255.0, 4)
+            moved = level > 0.02
+            haar = getattr(cv2, "data").haarcascades  # noqa: B009
+            cascade = cv2.CascadeClassifier(haar + "haarcascade_frontalface_default.xml")
+            faces = cascade.detectMultiScale(grays[-1], 1.1, 5, minSize=(60, 60))
+            present = len(faces) > 0
+            return {"ok": True, "present": present, "faces": int(len(faces)),
+                    "motion": moved, "motion_level": level, "frames": len(grays),
+                    "alert": bool(moved or present),
+                    "summary": ("person present" if present else
+                                "motion detected" if moved else "all quiet"),
+                    "_backend": "cv2-watch"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "_backend": "builtin"}
+        finally:
+            if cap is not None:
+                cap.release()
 
     def _face_track(self, camera: int) -> dict[str, Any]:
         """REAL: capture one webcam frame and locate the strongest face — the
