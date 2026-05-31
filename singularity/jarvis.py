@@ -192,7 +192,7 @@ def _load_voice() -> Any:
         return None
 
 
-async def awaken(*, voice: bool = False, open_browser: bool = True,
+async def awaken(*, voice: bool = False, open_browser: bool = True, sentinel: bool = False,
                  host: str = "127.0.0.1", port: int = 8088, goal: str | None = None) -> None:
     """It all as one: boot the kernel (real organs), serve the live dashboard,
     enable per-agent voice, and run the interactive JARVIS commander — all in ONE
@@ -236,6 +236,14 @@ async def awaken(*, voice: bool = False, open_browser: bool = True,
 
     v = _load_voice() if voice else None
     jarvis = Jarvis(kernel, voice=v)
+
+    sentinel_task = None
+    if sentinel:  # PROACTIVE: sense the environment and react on its own
+        from .sentinel import Sentinel
+
+        sentinel_task = asyncio.create_task(
+            Sentinel(kernel, voice=v).watch_forever(interval_s=20.0))
+        print("  sentinel: proactive monitoring on (greets on presence, alerts on motion)")
     if v is not None:
         with contextlib.suppress(Exception):
             v.speak_as("jarvis", f"JARVIS awakened. {real} of nine organs are real. I am ready.")
@@ -270,6 +278,10 @@ async def awaken(*, voice: bool = False, open_browser: bool = True,
             server.should_exit = True
             with contextlib.suppress(Exception):
                 await server_task
+        if sentinel_task is not None:
+            sentinel_task.cancel()
+            with contextlib.suppress(Exception):
+                await sentinel_task
         await kernel.shutdown()
         if v is not None:
             with contextlib.suppress(Exception):

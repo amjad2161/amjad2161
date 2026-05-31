@@ -135,6 +135,19 @@ def _cmd_memory(block: str | None, content: str | None) -> int:
     return 0
 
 
+def _cmd_sentinel(interval: float, ticks: int | None, force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        from .evolution import Evolver
+        from .sentinel import Sentinel
+
+        await Sentinel(kernel, evolver=Evolver()).watch_forever(
+            interval_s=interval, max_ticks=ticks)
+        return {"sentinel": "stopped", "ticks": ticks}
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_evolve(interval: float, cycles: int | None, objectives: list[str],
                 force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
@@ -342,6 +355,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("context", help="show the live adaptive context (time / state / memory)")
 
+    p_sentinel = sub.add_parser(
+        "sentinel", help="proactive monitor: sense the environment and react on its own")
+    p_sentinel.add_argument("--interval", type=float, default=20.0, help="seconds between senses")
+    p_sentinel.add_argument("--ticks", type=int, default=None, help="stop after N ticks")
+
     p_memory = sub.add_parser(
         "memory", help="view/edit JARVIS core memory (MemGPT/letta-style self-edited memory)")
     p_memory.add_argument("block", nargs="?", default=None, help="persona | human | directives")
@@ -357,6 +375,8 @@ def build_parser() -> argparse.ArgumentParser:
         "awaken", help="IT ALL AS ONE: boot kernel + live dashboard + voice + JARVIS loop")
     p_awaken.add_argument("goal", nargs="?", default=None)
     p_awaken.add_argument("--voice", action="store_true", help="hands-free voice loop")
+    p_awaken.add_argument("--sentinel", action="store_true",
+                          help="proactive monitoring (greet on presence, alert on motion)")
     p_awaken.add_argument("--no-browser", action="store_true", help="do not open the dashboard")
     p_awaken.add_argument("--port", type=int, default=8088)
 
@@ -408,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_jarvis(args.goal, args.voice, force_mock)
     if args.command == "context":
         return _cmd_context(force_mock)
+    if args.command == "sentinel":
+        return _cmd_sentinel(args.interval, args.ticks, force_mock)
     if args.command == "memory":
         return _cmd_memory(args.block, args.content)
     if args.command == "evolve":
@@ -416,8 +438,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "awaken":
         from .jarvis import awaken_main
 
-        return awaken_main(voice=args.voice, open_browser=not args.no_browser,
-                           port=args.port, goal=args.goal)
+        return awaken_main(voice=args.voice, sentinel=args.sentinel,
+                           open_browser=not args.no_browser, port=args.port, goal=args.goal)
     if args.command == "demo":
         return _cmd_demo(force_mock)
     if args.command == "serve":
