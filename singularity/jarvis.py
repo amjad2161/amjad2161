@@ -88,22 +88,34 @@ class Jarvis:
 
     # -- the loop --------------------------------------------------------------
     async def command(self, goal: str, *, max_tasks: int = 5) -> dict[str, Any]:
-        """Plan -> parallel multi-organ execute -> synthesise -> (speak)."""
-        # 1) PLAN with the real reasoning core, conditioned on self-edited memory
-        # (MemGPT/letta style) so accumulated lessons shape what JARVIS plans.
-        mem = ""
-        if self.evolver is not None:
-            try:
-                mem = self.evolver.store.memory_render()
-            except Exception:
-                mem = ""
-        plan_goal = f"What I remember:\n{mem}\n\nGoal: {goal}" if mem else goal
+        """Plan -> parallel multi-organ execute -> synthesise -> (speak).
+
+        Everything here is conditioned on the LIVE context (time + state + memory +
+        surroundings), so the plan and the routing adapt to the moment."""
+        # 1) Build the dynamic context and PLAN on it (the self-adapting principle).
+        ctx = ""
+        snap: dict[str, Any] = {}
+        try:
+            from .context import Context
+
+            snap = await Context.snapshot(self.kernel, self.evolver)
+            ctx = Context.render(snap)
+        except Exception:
+            ctx = ""
+        plan_goal = f"{ctx}\n\nGoal: {goal}" if ctx else goal
         plan = await self.kernel.route("neuro.plan", {"goal": plan_goal, "max_tasks": max_tasks})
         tasks = plan.get("tasks", []) or [{"title": goal}]
         titles = [str(t.get("title", t) if isinstance(t, dict) else t) for t in tasks]
 
-        # 2) EXECUTE every independent step IN PARALLEL across the federation.
-        routed = [self._intent_for(title) for title in titles]  # (intent, payload, term)
+        # 2) EXECUTE every step IN PARALLEL — but ADAPT routing to live state:
+        #    a step routed to a DOWN organ is redirected to a live specialist.
+        down = set(snap.get("down_organs") or [])
+        routed: list[tuple[str, dict[str, Any], str]] = []
+        for title in titles:
+            intent, payload, term = self._intent_for(title)
+            if intent.split(".")[0] in down:
+                intent, payload = "agents.route", {"request": title}
+            routed.append((intent, payload, term))
         calls = [(intent, payload) for intent, payload, _ in routed]
         results = await self.kernel.fanout(calls) if calls else []
 

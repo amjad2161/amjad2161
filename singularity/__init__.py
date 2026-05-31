@@ -36,6 +36,7 @@ from .kernel.contracts import (
     OrganInfo,
     Signal,
 )
+from .context import Context
 from .evolution import Evolver, ExperienceStore
 from .jarvis import Jarvis
 from .kernel.event_bus import EventBus
@@ -56,6 +57,7 @@ __all__ = [
     "Jarvis",
     "Evolver",
     "ExperienceStore",
+    "Context",
     "SingularityConfig",
     "OrganRegistry",
     "build_default_registry",

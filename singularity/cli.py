@@ -108,6 +108,16 @@ def _cmd_autopilot(goal: str, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_context(force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        from .context import Context
+
+        return await Context.snapshot(kernel)
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_memory(block: str | None, content: str | None) -> int:
     from .evolution import ExperienceStore
 
@@ -330,6 +340,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_jarvis.add_argument("--voice", action="store_true",
                           help="speak the conclusion (if a voice backend is present)")
 
+    sub.add_parser("context", help="show the live adaptive context (time / state / memory)")
+
     p_memory = sub.add_parser(
         "memory", help="view/edit JARVIS core memory (MemGPT/letta-style self-edited memory)")
     p_memory.add_argument("block", nargs="?", default=None, help="persona | human | directives")
@@ -394,6 +406,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pulse(args.goal, force_mock)
     if args.command == "jarvis":
         return _cmd_jarvis(args.goal, args.voice, force_mock)
+    if args.command == "context":
+        return _cmd_context(force_mock)
     if args.command == "memory":
         return _cmd_memory(args.block, args.content)
     if args.command == "evolve":
