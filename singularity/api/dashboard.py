@@ -237,6 +237,27 @@ function drawCore(){
   g.fillStyle='#eaffff'; g.beginPath(); g.arc(cx,cy,cr,0,7); g.fill();
   g.fillStyle='rgba(125,140,168,.9)'; g.font='10px ui-monospace,monospace'; g.textAlign='center';
   g.fillText(`${realN}/9 REAL`, cx, cy+cr*2.4+14);
+  // ── robot-head face: blinking/glancing eyes + a sine "mouth" (hologlyph) ──
+  const blink=(Math.sin(t*0.7)>0.97||Math.sin(t*1.3+2)>0.985)?0.12:1;
+  const gx=3*Math.sin(t*0.5), gy=2*Math.sin(t*0.37+1);
+  const eyeY=cy-R*0.66, eyeDx=Math.min(W,H)*0.11, eyeR=11;
+  [-1,1].forEach(side=>{
+    g.save(); g.translate(cx+side*eyeDx,eyeY); g.scale(1,blink);
+    g.fillStyle='rgba(8,16,26,.9)'; g.strokeStyle=`rgba(34,211,238,${0.5+0.4*flare})`; g.lineWidth=1.5;
+    g.beginPath(); g.ellipse(0,0,eyeR,eyeR*1.15,0,0,7); g.fill(); g.stroke();
+    g.shadowColor='rgba(34,211,238,.9)'; g.shadowBlur=10; g.fillStyle='#bdf3ff';
+    g.beginPath(); g.arc(gx,gy,4+1.5*flare,0,7); g.fill(); g.shadowBlur=0; g.restore();
+  });
+  const my=cy+R*0.7, mw=Math.min(W*0.5,300), amp=(4+11*flare)+2*Math.sin(t*3);
+  for(let tr=4;tr>=1;tr--){
+    g.beginPath(); g.strokeStyle=`rgba(0,${175+tr*16},${200+tr*12},${0.16*tr})`; g.lineWidth=tr===1?2:1;
+    for(let i=0;i<=mw;i+=4){
+      const px=cx-mw/2+i, fade=Math.sin(Math.PI*i/mw);
+      const py=my+Math.sin(i*0.08-t*4-tr*0.5)*amp*fade;
+      i===0?g.moveTo(px,py):g.lineTo(px,py);
+    }
+    g.stroke();
+  }
   requestAnimationFrame(drawCore);
 }
 requestAnimationFrame(drawCore);

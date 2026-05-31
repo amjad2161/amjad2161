@@ -39,6 +39,8 @@ class VisionOrgan(BaseOrgan):
                    {"prompt": "str", "seconds": "float?"}),
         Capability("vision.splat", "Generate a 3D Gaussian-splat scene spec (SuperSplat style).",
                    {"prompt": "str", "count": "int?"}),
+        Capability("vision.face_track", "See and locate a face via the webcam (robot-head eyes).",
+                   {"camera": "int?"}),
     )
 
     async def _attach_real(self) -> None:
@@ -158,7 +160,48 @@ class VisionOrgan(BaseOrgan):
                                float(payload.get("seconds", 1.5)))
         if intent == "vision.splat":
             return self._splat(str(payload.get("prompt", "nebula")), int(payload.get("count", 24)))
+        if intent == "vision.face_track":
+            import asyncio
+
+            return await asyncio.to_thread(self._face_track, int(payload.get("camera", 0)))
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _face_track(self, camera: int) -> dict[str, Any]:
+        """REAL: capture one webcam frame and locate the strongest face — the
+        software twin of the robot head's eye-tracking (cv2 built-in cascade, no
+        model file). Returns the normalized look-vector the 'eyes' should follow."""
+        try:
+            import cv2
+        except Exception:
+            return {"ok": False, "error": "opencv (cv2) not available", "_backend": "builtin"}
+        cap = None
+        try:
+            cap = cv2.VideoCapture(camera)
+            ok, frame = (cap.read() if cap is not None else (False, None))
+            if not ok or frame is None:
+                return {"ok": False, "error": f"no frame from camera {camera}", "_backend": "builtin"}
+            h, w = frame.shape[:2]
+            haar_dir = getattr(cv2, "data").haarcascades  # noqa: B009
+            cascade = cv2.CascadeClassifier(haar_dir + "haarcascade_frontalface_default.xml")
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
+            if len(faces) == 0:
+                return {"ok": True, "found": False, "frame": {"w": int(w), "h": int(h)},
+                        "look": {"x": 0.0, "y": 0.0}, "_backend": "cv2-facetrack"}
+            fx, fy, fw, fh = max(faces, key=lambda b: int(b[2]) * int(b[3]))  # strongest (largest)
+            cx, cy = int(fx + fw / 2), int(fy + fh / 2)
+            # normalised look-vector in [-1,1] (where the eyes should point)
+            look_x = round((cx - w / 2) / (w / 2), 3)
+            look_y = round((cy - h / 2) / (h / 2), 3)
+            return {"ok": True, "found": True, "frame": {"w": int(w), "h": int(h)},
+                    "face": {"x": cx, "y": cy, "w": int(fw), "h": int(fh)},
+                    "look": {"x": look_x, "y": look_y},
+                    "size_pct": round(100 * fw * fh / (w * h), 1), "_backend": "cv2-facetrack"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "_backend": "builtin"}
+        finally:
+            if cap is not None:
+                cap.release()
 
     def _audio(self, prompt: str, seconds: float) -> dict[str, Any]:
         seconds = max(0.25, min(seconds, 8.0))
