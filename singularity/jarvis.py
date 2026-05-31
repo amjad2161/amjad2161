@@ -36,20 +36,38 @@ _ROUTES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
+# Each organ's default intent (used when learned routing picks an organ).
+_ORGAN_INTENT = {
+    "neuro": "neuro.think", "agents": "agents.route", "knowledge": "knowledge.search",
+    "sky": "sky.telemetry", "trade": "trade.signal", "vision": "vision.analyze",
+    "nexus": "nexus.telemetry", "net": "net.proxy_url", "control": "control.browse",
+}
+
+
 class Jarvis:
     """The unified JARVIS commander over a booted kernel."""
 
-    def __init__(self, kernel: Any, voice: Any = None) -> None:
+    def __init__(self, kernel: Any, voice: Any = None, evolver: Any = None) -> None:
         self.kernel = kernel
         self.voice = voice
+        self.evolver = evolver  # optional self-learning layer
 
     # -- routing ---------------------------------------------------------------
-    def _intent_for(self, title: str) -> tuple[str, dict[str, Any]]:
+    def _intent_for(self, title: str) -> tuple[str, dict[str, Any], str]:
         t = title.lower()
+        # 1) learned routing: if experience says a term strongly maps to an organ.
+        if self.evolver is not None:
+            for word in t.split():
+                organ = self.evolver.learned_organ(word)
+                if organ and organ in _ORGAN_INTENT:
+                    intent = _ORGAN_INTENT[organ]
+                    return intent, self._payload(intent, title), word
+        # 2) static keyword router.
         for keys, intent in _ROUTES:
-            if any(k in t for k in keys):
-                return intent, self._payload(intent, title)
-        return "agents.route", {"request": title}
+            for k in keys:
+                if k in t:
+                    return intent, self._payload(intent, title), k
+        return "agents.route", {"request": title}, ""
 
     def _payload(self, intent: str, title: str) -> dict[str, Any]:
         if intent == "trade.signal":
@@ -77,12 +95,13 @@ class Jarvis:
         titles = [str(t.get("title", t) if isinstance(t, dict) else t) for t in tasks]
 
         # 2) EXECUTE every independent step IN PARALLEL across the federation.
-        calls = [self._intent_for(title) for title in titles]
+        routed = [self._intent_for(title) for title in titles]  # (intent, payload, term)
+        calls = [(intent, payload) for intent, payload, _ in routed]
         results = await self.kernel.fanout(calls) if calls else []
 
         # 3) SYNTHESISE a conclusion with the brain.
         digest = "; ".join(
-            f"{intent}->{_brief(res)}" for (intent, _), res in zip(calls, results)
+            f"{intent}->{_brief(res)}" for (intent, _, _), res in zip(routed, results)
         )
         synth = await self.kernel.route(
             "neuro.think",
@@ -103,14 +122,26 @@ class Jarvis:
             except Exception:  # noqa: BLE001 - voice is best-effort
                 pass
 
+        # 5) LEARN — record the experience and reinforce learned routing.
+        reward = None
+        if self.evolver is not None:
+            try:
+                reward = self.evolver.observe(
+                    goal, titles,
+                    [(term, intent.split(".")[0]) for intent, _, term in routed],
+                    results, conclusion)
+            except Exception:  # noqa: BLE001 - learning is best-effort
+                reward = None
+
         return {
             "goal": goal,
             "plan": titles,
-            "executed": [intent for intent, _ in calls],
-            "organs_engaged": sorted({intent.split(".")[0] for intent, _ in calls}),
+            "executed": [intent for intent, _, _ in routed],
+            "organs_engaged": sorted({intent.split(".")[0] for intent, _, _ in routed}),
             "results": results,
             "conclusion": conclusion,
             "parallel": True,
+            "reward": reward,
         }
 
 

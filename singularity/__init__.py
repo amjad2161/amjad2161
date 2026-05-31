@@ -36,6 +36,7 @@ from .kernel.contracts import (
     OrganInfo,
     Signal,
 )
+from .evolution import Evolver, ExperienceStore
 from .jarvis import Jarvis
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
@@ -53,6 +54,8 @@ __all__ = [
     "Singularity",
     "build_default_kernel",
     "Jarvis",
+    "Evolver",
+    "ExperienceStore",
     "SingularityConfig",
     "OrganRegistry",
     "build_default_registry",

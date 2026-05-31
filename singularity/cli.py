@@ -108,6 +108,22 @@ def _cmd_autopilot(goal: str, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_evolve(interval: float, cycles: int | None, objectives: list[str],
+                force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        from .evolution import Evolver
+        from .jarvis import Jarvis
+
+        ev = Evolver()
+        jarvis = Jarvis(kernel, evolver=ev)
+        await ev.evolve_forever(kernel, jarvis, objectives=objectives,
+                                interval_s=interval, max_cycles=cycles)
+        return ev.store.stats()
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_jarvis(goal: str, use_voice: bool, force_mock: bool) -> int:
     async def run(kernel: Singularity) -> Any:
         from .jarvis import Jarvis
@@ -297,6 +313,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_jarvis.add_argument("--voice", action="store_true",
                           help="speak the conclusion (if a voice backend is present)")
 
+    p_evolve = sub.add_parser(
+        "evolve", help="24/7 self-learning: pursue goals, reflect, re-discover, improve routing")
+    p_evolve.add_argument("objectives", nargs="*", help="standing goals to pursue each cycle")
+    p_evolve.add_argument("--interval", type=float, default=600.0, help="seconds between cycles")
+    p_evolve.add_argument("--cycles", type=int, default=None, help="stop after N cycles (default: forever)")
+
     p_awaken = sub.add_parser(
         "awaken", help="IT ALL AS ONE: boot kernel + live dashboard + voice + JARVIS loop")
     p_awaken.add_argument("goal", nargs="?", default=None)
@@ -350,6 +372,9 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_pulse(args.goal, force_mock)
     if args.command == "jarvis":
         return _cmd_jarvis(args.goal, args.voice, force_mock)
+    if args.command == "evolve":
+        objs = args.objectives or ["scan the market", "audit my skills for gaps"]
+        return _cmd_evolve(args.interval, args.cycles, objs, force_mock)
     if args.command == "awaken":
         from .jarvis import awaken_main
 
