@@ -47,6 +47,7 @@ class KnowledgeOrgan(BaseOrgan):
     def __init__(self, *, force_mock: bool = False) -> None:
         super().__init__(force_mock=force_mock)
         self._index: list[dict[str, str]] = []
+        self._tfidf: dict[str, Any] | None = None  # lazily-built TF-IDF index
 
     async def _attach_real(self) -> None:
         index: list[dict[str, str]] = []
@@ -96,17 +97,49 @@ class KnowledgeOrgan(BaseOrgan):
                     "_backend": self._provenance}
         raise AssertionError("unreachable")  # pragma: no cover
 
+    def _build_tfidf(self) -> None:
+        """Build a TF-IDF index over the corpus once (cached) — real semantic
+        ranking instead of raw keyword counts (khoj / RAG style)."""
+        import math
+        import re
+        from collections import Counter
+
+        docs = []
+        for a in self._index:
+            text = f"{a.get('name', '')} {a.get('description', '')}".lower()
+            docs.append(Counter(re.findall(r"[a-z0-9]+", text)))
+        n_docs = max(1, len(docs))
+        df: Counter[str] = Counter()
+        for c in docs:
+            df.update(c.keys())
+        idf = {t: math.log(n_docs / (1 + n)) + 1.0 for t, n in df.items()}
+        vecs: list[tuple[dict[str, float], float]] = []
+        for c in docs:
+            v = {t: cnt * idf.get(t, 0.0) for t, cnt in c.items()}
+            norm = math.sqrt(sum(x * x for x in v.values())) or 1e-9
+            vecs.append((v, norm))
+        self._tfidf = {"idf": idf, "vecs": vecs}
+
     def _search(self, query: str, limit: int) -> dict[str, Any]:
-        terms = [t for t in query.lower().split() if t]
-        scored: list[tuple[int, dict[str, str]]] = []
-        for asset in self._index:
-            haystack = f"{asset.get('name', '')} {asset.get('description', '')}".lower()
-            score = sum(haystack.count(term) for term in terms)
-            if score:
-                scored.append((score, asset))
+        import math
+        import re
+        from collections import Counter
+
+        if self._tfidf is None:
+            self._build_tfidf()
+        idf: dict[str, float] = self._tfidf["idf"]  # type: ignore[index]
+        vecs: list[tuple[dict[str, float], float]] = self._tfidf["vecs"]  # type: ignore[index]
+        qc = Counter(re.findall(r"[a-z0-9]+", query.lower()))
+        qv = {t: cnt * idf.get(t, 0.0) for t, cnt in qc.items()}
+        qnorm = math.sqrt(sum(x * x for x in qv.values())) or 1e-9
+        scored: list[tuple[float, int]] = []
+        for i, (v, norm) in enumerate(vecs):
+            dot = sum(qv[t] * v.get(t, 0.0) for t in qv)
+            if dot > 0:
+                scored.append((dot / (qnorm * norm), i))
         scored.sort(key=lambda item: item[0], reverse=True)
-        hits = [asset for _, asset in scored[:limit]]
-        return {"query": query, "hits": hits, "count": len(hits)}
+        hits = [{**self._index[i], "score": round(s, 4)} for s, i in scored[:limit]]
+        return {"query": query, "hits": hits, "count": len(hits), "method": "tfidf-cosine"}
 
 
 # --------------------------------------------------------------------------
