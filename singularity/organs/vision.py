@@ -204,7 +204,8 @@ class VisionOrgan(BaseOrgan):
             data = small.reshape(-1, 3).astype(np.float32)
             k = max(2, min(k, 8))
             crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0)
-            _, labels, centers = cv2.kmeans(data, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
+            kmeans = getattr(cv2, "kmeans")  # noqa: B009 - avoid strict cv2 stub overloads
+            _, labels, centers = kmeans(data, k, None, crit, 3, cv2.KMEANS_PP_CENTERS)
             counts = np.bincount(labels.flatten(), minlength=k)
             order = np.argsort(-counts)
             colors = []

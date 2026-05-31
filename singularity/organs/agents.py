@@ -34,6 +34,8 @@ class AgentsOrgan(BaseOrgan):
     domain = Domain.AGENCY
     title = "JARVIS — agency & orchestration"
     vision = "Route any request to the best specialist persona and run it to a deliverable."
+    # Real persona execution goes through a local LLM — give it ample room.
+    invoke_timeout_s = 220.0
     capabilities = (
         Capability("agents.list", "List the available specialist personas.", {}),
         Capability("agents.route", "Pick the best persona for a request.", {"request": "str"}),
@@ -66,25 +68,68 @@ class AgentsOrgan(BaseOrgan):
         if intent == "agents.run":
             request = str(payload.get("request", ""))
             routed = self._route(request)
-            persona = payload.get("persona") or routed["persona"]
-            note = None
+            persona = str(payload.get("persona") or routed["persona"])
+            deliverable = None
+            backend = routed.get("_backend", "builtin")
             if self._backend is not None:
-                # Real persona is matched by agency; full tool-loop execution
-                # additionally requires ANTHROPIC_API_KEY (honestly reported).
-                import os
+                import asyncio
 
-                if not os.environ.get("ANTHROPIC_API_KEY"):
-                    note = "matched real persona; execution needs ANTHROPIC_API_KEY"
+                # REAL: run the matched persona's own system prompt through the
+                # local LLM — turning 324 loaded specialists into 324 that act.
+                deliverable = await asyncio.to_thread(self._run_persona, persona, request)
+                if deliverable:
+                    backend = "agency+ollama"
+            if not deliverable:
+                deliverable = f"[{persona}] handled: {request[:80]}"
             return {
                 "persona": persona,
                 "request": request,
-                "deliverable": f"[{persona}] handled: {request[:80]}",
+                "deliverable": deliverable,
                 "status": "completed",
-                "note": note,
                 "_usd": 0.0,
-                "_backend": routed.get("_backend", "builtin"),
+                "_backend": backend,
+                "_mode": "real" if "ollama" in backend else "mock",
             }
         raise AssertionError("unreachable")  # pragma: no cover
+
+    def _find_skill(self, slug: str) -> Any:
+        if self._backend is None:
+            return None
+        try:
+            for s in self._backend["registry"].all():
+                if getattr(s, "slug", None) == slug:
+                    return s
+        except Exception:
+            return None
+        return None
+
+    def _run_persona(self, slug: str, request: str) -> str | None:
+        """Execute a real persona: load its system prompt and run the request
+        through the local LLM (Ollama). None if unavailable -> builtin fallback."""
+        import json
+        import os
+        import urllib.request
+
+        from .neuro import NeuroOrgan
+
+        model = NeuroOrgan._probe_ollama()
+        skill = self._find_skill(slug)
+        if not model or skill is None:
+            return None
+        # Keep the persona essence but stay fast enough for a local CPU model.
+        system = (getattr(skill, "system_prompt", "") or getattr(skill, "body", "")
+                  or getattr(skill, "description", ""))[:1800]
+        host = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+        body = {"model": model, "system": system, "prompt": request, "stream": False,
+                "options": {"num_predict": 220, "temperature": 0.5}}
+        try:
+            req = urllib.request.Request(
+                f"{host}/api/generate", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=200) as r:
+                return str(json.loads(r.read()).get("response", "")).strip() or None
+        except Exception:
+            return None
 
     def _route(self, request: str) -> dict[str, Any]:
         if self._backend is not None:
