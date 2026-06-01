@@ -190,6 +190,26 @@ def _cmd_crew(goal: str, size: int, force_mock: bool) -> int:
     return 0
 
 
+def _cmd_reflexes(force_mock: bool) -> int:
+    async def run(kernel: Singularity) -> Any:
+        from .reflexes import Reflexes
+
+        reflexes = Reflexes(kernel).arm()
+        # Demonstrate the autonomic arc: emit a motion signal and watch the kernel
+        # react ON ITS OWN (no command), then report what it did.
+        await kernel.bus.emit("sentinel.motion", {"level": 0.5, "phase": "demo"})
+        await reflexes.drain()
+        reflexes.disarm()
+        return {
+            "armed": [{"name": r.name, "on": r.on, "intent": r.intent}
+                      for r in reflexes.reflexes],
+            "fired_autonomously": reflexes.fired,
+        }
+
+    _print(asyncio.run(_with_kernel(run, force_mock=force_mock)))
+    return 0
+
+
 def _cmd_doctor(force_mock: bool) -> int:
     import importlib.util
     import platform
@@ -366,6 +386,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_crew.add_argument("goal")
     p_crew.add_argument("--size", type=int, default=3, help="number of specialists (2-4)")
 
+    sub.add_parser(
+        "reflexes", help="autonomic arcs: fire a demo event and watch the kernel act on its own")
+
     sub.add_parser("context", help="show the live adaptive context (time / state / memory)")
 
     p_sentinel = sub.add_parser(
@@ -441,6 +464,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_jarvis(args.goal, args.voice, force_mock)
     if args.command == "crew":
         return _cmd_crew(args.goal, args.size, force_mock)
+    if args.command == "reflexes":
+        return _cmd_reflexes(force_mock)
     if args.command == "context":
         return _cmd_context(force_mock)
     if args.command == "sentinel":

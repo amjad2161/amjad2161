@@ -39,6 +39,7 @@ from .kernel.contracts import (
 from .context import Context
 from .evolution import Evolver, ExperienceStore
 from .jarvis import Jarvis
+from .reflexes import Reflex, Reflexes
 from .sentinel import Sentinel
 from .kernel.event_bus import EventBus
 from .kernel.kernel import Singularity, build_default_kernel
@@ -60,6 +61,8 @@ __all__ = [
     "ExperienceStore",
     "Context",
     "Sentinel",
+    "Reflexes",
+    "Reflex",
     "SingularityConfig",
     "OrganRegistry",
     "build_default_registry",

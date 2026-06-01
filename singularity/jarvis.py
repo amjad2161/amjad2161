@@ -238,12 +238,17 @@ async def awaken(*, voice: bool = False, open_browser: bool = True, sentinel: bo
     jarvis = Jarvis(kernel, voice=v)
 
     sentinel_task = None
-    if sentinel:  # PROACTIVE: sense the environment and react on its own
+    reflexes = None
+    if sentinel:  # PROACTIVE + AUTONOMIC: sense, react, and ACT on its own
+        from .reflexes import Reflexes
         from .sentinel import Sentinel
 
+        reflexes = Reflexes(kernel, voice=v).arm()  # events now trigger actions on their own
         sentinel_task = asyncio.create_task(
             Sentinel(kernel, voice=v).watch_forever(interval_s=20.0))
         print("  sentinel: proactive monitoring on (greets on presence, alerts on motion)")
+        print(f"  reflexes: {len(reflexes.reflexes)} autonomic arc(s) armed "
+              "(e.g. motion -> look + report, no human needed)")
     if v is not None:
         with contextlib.suppress(Exception):
             v.speak_as("jarvis", f"JARVIS awakened. {real} of nine organs are real. I am ready.")
@@ -278,6 +283,8 @@ async def awaken(*, voice: bool = False, open_browser: bool = True, sentinel: bo
             server.should_exit = True
             with contextlib.suppress(Exception):
                 await server_task
+        if reflexes is not None:
+            reflexes.disarm()
         if sentinel_task is not None:
             sentinel_task.cancel()
             with contextlib.suppress(Exception):
