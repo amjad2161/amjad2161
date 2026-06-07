@@ -69,3 +69,13 @@ Environment template:
 ```bash
 cp .env.example .env
 ```
+
+## KidGenius Academy
+
+Full design and technical documentation for the **KidGenius Academy** interactive
+3D educational platform is available under [`docs/kidgenius-academy/`](docs/kidgenius-academy/README.md).
+
+| Related repository | Description |
+|---|---|
+| [citrus-inspectors-academy](https://github.com/amjad2161/citrus-inspectors-academy) | Citrus-themed 3D educational game |
+| [english-explorer-kids](https://github.com/amjad2161/english-explorer-kids) | English learning platform for kids |
