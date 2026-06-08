@@ -85,7 +85,14 @@ def _build_modules() -> dict[str, Any]:
     return modules
 
 
-def _module_factories() -> dict[str, Any]:
+def _module_factories(live_modules: dict[str, Any]) -> dict[str, Any]:
+    def _reel_factory() -> ReelMaker:
+        return ReelMaker(
+            sonic=live_modules.get("sonic"),
+            creative=live_modules.get("creative"),
+            nexus=live_modules.get("nexus"),
+        )
+
     return {
         "neuro": lambda: NeuroCore(api_key=os.getenv("ANTHROPIC_API_KEY")),
         "nav": OrbitalNav,
@@ -98,7 +105,7 @@ def _module_factories() -> dict[str, Any]:
         ),
         "creative": CreativeEngine,
         "vision": OmniVision,
-        "reel": ReelMaker,
+        "reel": _reel_factory,
     }
 
 
@@ -142,7 +149,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.admin_token = os.getenv("BRAINIAC_ADMIN_TOKEN", "brainiac-admin")
     app.state.watchdog = Watchdog(
         modules=app.state.modules,
-        factories=_module_factories(),
+        factories=_module_factories(app.state.modules),
         module_health=app.state.module_health,
         health_key_map=_watchdog_health_map(),
     )
@@ -190,7 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="BRAINIAC AI",
     description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -298,14 +305,14 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.0.0"}
+    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.1.0"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.0.0",
+        version="1.1.0",
         modules=dict(app.state.module_health),
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -791,3 +798,15 @@ async def download_reel_video(job_id: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Reel video file missing")
     return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+
+@app.get("/api/v1/reel/jobs/{job_id}/thumbnail", tags=["REEL-MAKER"])
+async def download_reel_thumbnail(job_id: str):
+    reel: ReelMaker = _modules()["reel"]
+    job = reel.get_job(job_id)
+    if not job or not job.thumbnail_path:
+        raise HTTPException(status_code=404, detail="Reel thumbnail not found")
+    path = Path(job.thumbnail_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Reel thumbnail file missing")
+    return FileResponse(path, media_type="image/jpeg", filename=path.name)

@@ -17,9 +17,9 @@ from .core import (
     TelemetryHub,
 )
 
-__version__ = "1.0.0"
-__codename__ = "GENESIS"
-__author__ = "amjad2161"
+__version__ = "1.1.0"
+__codename__ = "REELMAKER"
+__author__ = "BRAINIAC"
 
 __all__ = [
     "CreativeEngine",

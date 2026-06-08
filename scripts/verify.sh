@@ -8,8 +8,8 @@ echo "║  BRAINIAC System Verification                                    ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 
 echo ""
-echo "▶ [1/4] Verifying Python imports..."
-python -c "
+echo "▶ [1/5] Verifying Python imports..."
+python3 -c "
 from brainiac.core import (
     NeuroCore, OrbitalNav, SonicMatrix, SatLink,
     NexusSync, TelemetryHub, CyberShield, CreativeEngine, OmniVision, ReelMaker,
@@ -18,16 +18,20 @@ print('  ✓ All 10 core modules importable')
 "
 
 echo ""
-echo "▶ [2/4] Running module status check..."
-python -m brainiac.cli status
+echo "▶ [2/5] Running module status check..."
+python3 -m brainiac.cli status
 
 echo ""
-echo "▶ [3/4] Running end-to-end demo..."
-python -m brainiac.cli demo
+echo "▶ [3/5] Running end-to-end demo..."
+python3 -m brainiac.cli demo
 
 echo ""
-echo "▶ [4/4] Running test suite..."
-pytest tests/ --ignore=tests/test_neuro_core.py -q
+echo "▶ [4/5] REEL-MAKER smoke compose..."
+python3 -m brainiac.cli reel "BRAINIAC verification smoke"
+
+echo ""
+echo "▶ [5/5] Running test suite..."
+python3 -m pytest tests/ --ignore=tests/test_neuro_core.py -q
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"

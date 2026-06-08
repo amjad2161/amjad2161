@@ -90,6 +90,10 @@ def test_reel_compose_and_publish(client):
     assert r3.status_code == 200
     assert r3.headers["content-type"].startswith("video/")
 
+    r4 = client.get(f"/api/v1/reel/jobs/{job['job_id']}/thumbnail")
+    assert r4.status_code == 200
+    assert r4.headers["content-type"].startswith("image/")
+
 
 def test_metrics(client):
     r = client.get("/metrics")

@@ -1,4 +1,14 @@
-## [1.1.0] – Unreleased
+## [1.1.0] – REELMAKER
+
+- Added **REEL-MAKER** module: viral short-form video compose, algorithm scoring, platform specs, dry-run social publish, REST API, and CLI (`brainiac reel`).
+- H.264 transcode via ffmpeg after render for browser and social compatibility (`yuv420p`, `faststart`).
+- CreativeEngine-driven visual palette selection per reel style.
+- Watchdog reel factory preserves SonicMatrix / CreativeEngine / NexusSync dependencies on restart.
+- Added `GET /api/v1/reel/jobs/{job_id}/thumbnail` download endpoint.
+- Extended `verify.sh` and CLI demo with REEL-MAKER smoke flow.
+- Standalone project docs and packaging for `brainiac-reel-maker` repository.
+
+## [1.0.1] – Unreleased
 
 - Added FastAPI lifespan graceful shutdown handling for SIGINT/SIGTERM, in-flight WS/SSE cancellation, and NeuroCore client close.
 - Added NeuroCore hourly cost circuit breaker (`BRAINIAC_MAX_USD_PER_HOUR`) and `/api/v1/system/cost-stats`.

@@ -400,7 +400,12 @@ class ReelMaker:
             job.progress_pct = 35.0
 
             job.status = JobStatus.RENDERING
-            video_path, thumb_path, audio_path = self._render_video(job_id, script, spec)
+            video_path, thumb_path, audio_path = self._render_video(
+                job_id, script, spec, style=style
+            )
+            h264_path = self._transcode_h264(video_path)
+            if h264_path is not None:
+                video_path = h264_path
             job.video_path = str(video_path)
             job.thumbnail_path = str(thumb_path)
             job.progress_pct = 80.0
@@ -589,8 +594,43 @@ class ReelMaker:
 
     # ── Video rendering ───────────────────────────────────────────────────────
 
+    def _visual_palettes(
+        self, style: ReelStyle
+    ) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
+        palettes: list[tuple[tuple[int, int, int], tuple[int, int, int]]] = [
+            ((138, 43, 226), (255, 0, 128)),
+            ((0, 191, 255), (0, 255, 200)),
+            ((255, 94, 0), (255, 0, 110)),
+            ((46, 204, 113), (52, 152, 219)),
+            ((255, 195, 0), (255, 87, 34)),
+            ((63, 81, 181), (156, 39, 176)),
+        ]
+        if self._creative is None:
+            return palettes
+
+        from brainiac.core.creative_engine import Style as CreativeStyle
+
+        style_map = {
+            ReelStyle.VIRAL_HOOK: CreativeStyle.CINEMATIC,
+            ReelStyle.TUTORIAL: CreativeStyle.TECHNICAL,
+            ReelStyle.MOTIVATIONAL: CreativeStyle.ILLUSTRATION,
+            ReelStyle.PRODUCT: CreativeStyle.PHOTOREALISTIC,
+            ReelStyle.STORYTELLING: CreativeStyle.CINEMATIC,
+            ReelStyle.TREND_REMIX: CreativeStyle.ABSTRACT,
+            ReelStyle.NEWS_BUZZ: CreativeStyle.TECHNICAL,
+        }
+        ce_style = style_map.get(style, CreativeStyle.ABSTRACT)
+        spec = self._creative.generate_image_prompt("vertical reel background", style=ce_style)
+        offset = hash(spec["style"]) % len(palettes)
+        return palettes[offset:] + palettes[:offset]
+
     def _render_video(
-        self, job_id: str, script: ReelScript, spec: PlatformSpec
+        self,
+        job_id: str,
+        script: ReelScript,
+        spec: PlatformSpec,
+        *,
+        style: ReelStyle = ReelStyle.VIRAL_HOOK,
     ) -> tuple[Path, Path, Path | None]:
         w, h = spec.width, spec.height
         fps = 30
@@ -599,15 +639,10 @@ class ReelMaker:
         frames_per_scene = max(1, total_frames // len(scenes))
 
         video_path = self._output_dir / f"{job_id}.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # type: ignore[attr-defined]
         writer = cv2.VideoWriter(str(video_path), fourcc, fps, (w, h))
 
-        palettes = [
-            ((138, 43, 226), (255, 0, 128)),
-            ((0, 191, 255), (0, 255, 200)),
-            ((255, 94, 0), (255, 0, 110)),
-            ((46, 204, 113), (52, 152, 219)),
-        ]
+        palettes = self._visual_palettes(style)
 
         for frame_idx in range(total_frames):
             scene_idx = min(frame_idx // frames_per_scene, len(scenes) - 1)
@@ -629,6 +664,40 @@ class ReelMaker:
         thumb.save(thumb_path, quality=92)
 
         return video_path, thumb_path, None
+
+    def _transcode_h264(self, video_path: Path) -> Path | None:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg or not video_path.is_file():
+            return None
+        out_path = self._output_dir / f"{video_path.stem}_h264.mp4"
+        cmd = [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(video_path),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            "-an",
+            str(out_path),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            log.warning("reel_maker.transcode_failed", error=str(exc))
+            return None
+        if not out_path.is_file():
+            return None
+        with contextlib.suppress(OSError):
+            video_path.unlink()
+        return out_path
 
     @staticmethod
     def _gradient_frame(

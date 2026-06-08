@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from brainiac.core import CreativeEngine
 from brainiac.core.reel_maker import HookType, Platform, ReelMaker, ReelStyle
 
 
@@ -56,6 +57,13 @@ def test_diagnostics_online(reel_maker: ReelMaker) -> None:
     diag = reel_maker.diagnostics()
     assert diag["status"] == "ONLINE"
     assert "tiktok" in diag["platforms_supported"]
+
+
+def test_creative_palette_integration(tmp_path: Path) -> None:
+    reel = ReelMaker(output_dir=tmp_path, creative=CreativeEngine())
+    palettes = reel._visual_palettes(ReelStyle.VIRAL_HOOK)
+    assert len(palettes) >= 4
+    assert all(len(pair) == 2 for pair in palettes)
 
 
 @pytest.mark.asyncio
