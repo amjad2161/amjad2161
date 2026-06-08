@@ -18,7 +18,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
@@ -42,6 +42,7 @@ from brainiac.api.models import (
     TranslateRequest,
     TTSRequest,
 )
+from brainiac.api.reel_dashboard import reel_dashboard_page
 from brainiac.core import (
     CreativeEngine,
     CyberShield,
@@ -220,7 +221,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="BRAINIAC AI",
     description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.2.0",
+    version="1.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -328,14 +329,14 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.2.0"}
+    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.3.0"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.2.0",
+        version="1.3.0",
         modules=dict(app.state.module_health),
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -746,6 +747,17 @@ async def image_info(request: Request):
     image_bytes = await request.body()
     _validate_request_size(None, len(image_bytes))
     return vision.image_info(image_bytes)
+
+
+@app.get("/reel", response_class=HTMLResponse, tags=["REEL-MAKER"])
+async def reel_dashboard():
+    return reel_dashboard_page()
+
+
+@app.get("/api/v1/reel/social/status", tags=["REEL-MAKER"])
+async def reel_social_status():
+    reel: ReelMaker = _modules()["reel"]
+    return reel.social_status()
 
 
 @app.get("/api/v1/reel/platforms", tags=["REEL-MAKER"])

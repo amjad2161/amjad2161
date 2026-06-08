@@ -66,6 +66,23 @@ def test_reel_trends(client):
     assert "trending_hashtags" in data
 
 
+def test_reel_social_status(client):
+    r = client.get("/api/v1/reel/social/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "platforms" in data
+    assert "instagram" in data["platforms"]
+    assert "oauth_hint" in data["platforms"]["instagram"]
+    assert "webhook_configured" in data
+
+
+def test_reel_dashboard(client):
+    r = client.get("/reel")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "BRAINIAC REEL-MAKER" in r.text
+
+
 def test_reel_compose_and_publish(client):
     r = client.post(
         "/api/v1/reel/compose",

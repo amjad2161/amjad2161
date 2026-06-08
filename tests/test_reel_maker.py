@@ -236,3 +236,70 @@ async def test_neuro_script_when_available(reel_maker: ReelMaker) -> None:
     assert job.script_source == "neuro_core"
     assert job.script is not None
     assert job.script.hook == "Stop scrolling now"
+
+
+def test_social_status_without_tokens(reel_maker: ReelMaker) -> None:
+    status = reel_maker.social_status()
+    assert status["webhook_configured"] is False
+    assert "instagram" in status["platforms"]
+    assert status["platforms"]["instagram"]["configured"] is False
+    assert "INSTAGRAM_ACCESS_TOKEN" in status["platforms"]["instagram"]["missing_env"]
+    assert status["platforms"]["instagram"]["oauth_hint"]
+
+
+@pytest.mark.asyncio
+async def test_webhook_on_compose_ready(
+    reel_maker: ReelMaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from brainiac.core import reel_maker as rm
+
+    calls: list[dict[str, object]] = []
+
+    async def capture(event: str, job: Any, *, extra: dict[str, Any] | None = None) -> None:
+        calls.append({"event": event, "job_id": job.job_id, "extra": extra})
+
+    monkeypatch.setattr(rm, "WEBHOOK_URL", "https://hooks.example.com/reel")
+    monkeypatch.setattr(reel_maker, "_emit_webhook", capture)
+    job = await reel_maker.compose("webhook topic", voiceover=False)
+    assert job.status.value == "ready"
+    assert calls
+    assert calls[0]["event"] == "compose.ready"
+
+
+@pytest.mark.asyncio
+async def test_webhook_signature_header(
+    reel_maker: ReelMaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from brainiac.core import reel_maker as rm
+
+    captured: dict[str, Any] = {}
+
+    class FakeResponse:
+        status_code = 200
+        content = b""
+
+    class FakeClient:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> FakeClient:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+        async def post(self, url: str, *, content: bytes, headers: dict[str, str]) -> FakeResponse:
+            captured["url"] = url
+            captured["content"] = content
+            captured["headers"] = headers
+            return FakeResponse()
+
+    import httpx
+
+    monkeypatch.setattr(rm, "WEBHOOK_URL", "https://hooks.example.com/reel")
+    monkeypatch.setattr(rm, "WEBHOOK_SECRET", "test-secret")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+
+    job = await reel_maker.compose("signed webhook", voiceover=False)
+    assert job.status.value == "ready"
+    assert captured["headers"]["X-Brainiac-Signature"].startswith("sha256=")

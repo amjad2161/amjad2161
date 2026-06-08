@@ -1,4 +1,4 @@
-# BRAINIAC AI (v1.2.0)
+# BRAINIAC AI (v1.3.0)
 
 Standalone repository for BRAINIAC — **not** merged with or dependent on any other GitHub project. BRAINIAC is a FastAPI platform exposing **10 core modules**, including an automated viral reel composer for short-form social video:
 

@@ -1,3 +1,9 @@
+## [1.3.0] – REELMAKER webhooks, social status, dashboard
+
+- HTTP webhook callbacks on `compose.ready`, `compose.failed`, `publish.scheduled`, and `publish.completed` (`BRAINIAC_REEL_WEBHOOK_URL`, optional HMAC secret).
+- `GET /api/v1/reel/social/status` reports per-platform env readiness and OAuth setup hints (no secrets exposed).
+- Browser dashboard at `GET /reel` for compose, job list, dry-run publish, and delete.
+
 ## [1.2.0] – REELMAKER NeuroCore, scheduler, publishers
 
 - NeuroCore-powered reel scripts via `use_ai_script` on compose (falls back to templates when API key missing or parse fails).

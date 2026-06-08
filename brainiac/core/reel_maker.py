@@ -8,6 +8,8 @@ Composes vertical 9:16 video with hooks, captions, voiceover, and auto-posting.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -31,6 +33,8 @@ OUTPUT_DIR = Path(os.getenv("BRAINIAC_REEL_OUTPUT_DIR", "/tmp/brainiac-reels"))
 PUBLIC_BASE_URL = os.getenv("BRAINIAC_REEL_PUBLIC_BASE_URL", "").rstrip("/")
 JOB_TTL_DAYS = int(os.getenv("BRAINIAC_REEL_JOB_TTL_DAYS", "0") or 0)
 SCHEDULER_INTERVAL_S = float(os.getenv("BRAINIAC_REEL_SCHEDULER_INTERVAL_S", "30"))
+WEBHOOK_URL = os.getenv("BRAINIAC_REEL_WEBHOOK_URL", "").strip()
+WEBHOOK_SECRET = os.getenv("BRAINIAC_REEL_WEBHOOK_SECRET", "").strip()
 _DUMMY_API_KEYS = frozenset({"dummy-key-for-ci", "your-anthropic-api-key", ""})
 
 REEL_SCRIPT_SYSTEM = (
@@ -47,6 +51,40 @@ class Platform(str, Enum):
     TIKTOK = "tiktok"
     YOUTUBE = "youtube"
     FACEBOOK = "facebook"
+
+
+_SOCIAL_ENV: dict[Platform, dict[str, str]] = {
+    Platform.INSTAGRAM: {
+        "token": "INSTAGRAM_ACCESS_TOKEN",
+        "extra": "INSTAGRAM_USER_ID",
+    },
+    Platform.TIKTOK: {"token": "TIKTOK_ACCESS_TOKEN"},
+    Platform.YOUTUBE: {"token": "YOUTUBE_ACCESS_TOKEN"},
+    Platform.FACEBOOK: {
+        "token": "FACEBOOK_ACCESS_TOKEN",
+        "extra": "FACEBOOK_PAGE_ID",
+    },
+}
+
+_SOCIAL_OAUTH_HINTS: dict[Platform, str] = {
+    Platform.INSTAGRAM: (
+        "Create a Meta app, add Instagram Graph API, connect a Business/Creator account, "
+        "and generate a long-lived User access token with instagram_content_publish. "
+        "Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID (IG user id)."
+    ),
+    Platform.TIKTOK: (
+        "Register at developers.tiktok.com, create an app with Content Posting API, "
+        "complete OAuth for the creator, and set TIKTOK_ACCESS_TOKEN."
+    ),
+    Platform.YOUTUBE: (
+        "Enable YouTube Data API v3 in Google Cloud, OAuth consent screen, and upload scope "
+        "youtube.upload. Set YOUTUBE_ACCESS_TOKEN (refresh token flow recommended for production)."
+    ),
+    Platform.FACEBOOK: (
+        "Create a Meta app with Pages API, obtain a Page access token with pages_manage_posts, "
+        "and set FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID."
+    ),
+}
 
 
 class ReelStyle(str, Enum):
@@ -509,6 +547,10 @@ class ReelMaker:
             job.error = str(exc)
             log.error("reel_maker.compose_failed", job_id=job_id, error=str(exc))
         self._save_job(job)
+        if job.status == JobStatus.READY:
+            await self._emit_webhook("compose.ready", job)
+        elif job.status == JobStatus.FAILED:
+            await self._emit_webhook("compose.failed", job)
         return job
 
     def get_job(self, job_id: str) -> ReelJob | None:
@@ -541,13 +583,15 @@ class ReelMaker:
             job.scheduled_publish_at = schedule_at
             job.scheduled_platforms = [p.value for p in targets]
             self._save_job(job)
-            return {
+            response = {
                 "job_id": job_id,
                 "status": "scheduled",
                 "scheduled_at": schedule_at,
                 "platforms": job.scheduled_platforms,
                 "dry_run": use_dry_run,
             }
+            await self._emit_webhook("publish.scheduled", job, extra=response)
+            return response
 
         job.status = JobStatus.PUBLISHING
         self._save_job(job)
@@ -575,7 +619,9 @@ class ReelMaker:
         job.scheduled_platforms = None
         self._publish_count += 1
         self._save_job(job)
-        return {"job_id": job_id, "platforms": results, "dry_run": use_dry_run}
+        response = {"job_id": job_id, "platforms": results, "dry_run": use_dry_run}
+        await self._emit_webhook("publish.completed", job, extra=response)
+        return response
 
     async def process_scheduled_publishes(self) -> list[dict[str, Any]]:
         """Publish jobs whose scheduled_publish_at has passed."""
@@ -1425,6 +1471,94 @@ class ReelMaker:
         except Exception as exc:
             return {"platform": platform.value, "status": "error", "error": str(exc)}
 
+    # ── Webhooks & social status ──────────────────────────────────────────────
+
+    @staticmethod
+    def _webhook_configured() -> bool:
+        return bool(WEBHOOK_URL)
+
+    def social_status(self) -> dict[str, Any]:
+        platforms: dict[str, Any] = {}
+        for platform in Platform:
+            env = _SOCIAL_ENV[platform]
+            token_set = bool(os.getenv(env["token"]))
+            extra_key = env.get("extra")
+            extra_set = bool(os.getenv(extra_key)) if extra_key else True
+            missing: list[str] = []
+            if not token_set:
+                missing.append(env["token"])
+            if extra_key and not extra_set:
+                missing.append(extra_key)
+            if platform == Platform.INSTAGRAM and not PUBLIC_BASE_URL:
+                missing.append("BRAINIAC_REEL_PUBLIC_BASE_URL")
+            platforms[platform.value] = {
+                "configured": token_set
+                and extra_set
+                and (platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)),
+                "token_set": token_set,
+                "ready_for_live": token_set
+                and extra_set
+                and (platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)),
+                "missing_env": missing,
+                "oauth_hint": _SOCIAL_OAUTH_HINTS[platform],
+            }
+        return {
+            "webhook_configured": self._webhook_configured(),
+            "webhook_url_set": bool(WEBHOOK_URL),
+            "webhook_secret_set": bool(WEBHOOK_SECRET),
+            "public_base_url_configured": bool(PUBLIC_BASE_URL),
+            "live_publish_ready": self._any_platform_configured(),
+            "platforms": platforms,
+        }
+
+    async def _emit_webhook(
+        self,
+        event: str,
+        job: ReelJob,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        if not WEBHOOK_URL:
+            return
+        payload: dict[str, Any] = {
+            "event": event,
+            "timestamp": time.time(),
+            "job_id": job.job_id,
+            "topic": job.topic,
+            "status": job.status.value,
+            "platforms": [p.value for p in job.platforms],
+            "algorithm_score": job.algorithm_score,
+            "script_source": job.script_source,
+            "error": job.error,
+            "scheduled_publish_at": job.scheduled_publish_at,
+            "scheduled_platforms": job.scheduled_platforms,
+        }
+        if extra:
+            payload.update(extra)
+        body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+        headers = {"Content-Type": "application/json", "User-Agent": "BRAINIAC-REEL-MAKER/1.3"}
+        if WEBHOOK_SECRET:
+            sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+            headers["X-Brainiac-Signature"] = f"sha256={sig}"
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(WEBHOOK_URL, content=body, headers=headers)
+                log.debug(
+                    "reel_maker.webhook_sent",
+                    webhook_event=event,
+                    job_id=job.job_id,
+                    status=resp.status_code,
+                )
+        except Exception as exc:
+            log.warning(
+                "reel_maker.webhook_failed",
+                webhook_event=event,
+                job_id=job.job_id,
+                error=str(exc),
+            )
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
@@ -1444,4 +1578,5 @@ class ReelMaker:
             "neuro_configured": self._neuro is not None and self._neuro_api_available(),
             "job_ttl_days": JOB_TTL_DAYS,
             "scheduler_interval_s": SCHEDULER_INTERVAL_S,
+            "webhook_configured": self._webhook_configured(),
         }
