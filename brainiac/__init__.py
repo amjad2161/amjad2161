@@ -17,7 +17,7 @@ from .core import (
     TelemetryHub,
 )
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 __codename__ = "REELMAKER"
 __author__ = "BRAINIAC"
 

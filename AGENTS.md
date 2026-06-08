@@ -4,7 +4,7 @@
 
 ### Product scope
 
-This repository is **BRAINIAC AI v1.1.1** — a standalone Python FastAPI monolith. It is **not** tied to any other GitHub repository or legacy monorepo. All ten core modules and the Watchdog supervisor run in-process inside a single uvicorn server.
+This repository is **BRAINIAC AI v1.2.0** — a standalone Python FastAPI monolith. It is **not** tied to any other GitHub repository or legacy monorepo. All ten core modules and the Watchdog supervisor run in-process inside a single uvicorn server.
 
 ### Dependency refresh
 

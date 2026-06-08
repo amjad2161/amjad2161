@@ -1,0 +1,44 @@
+# BRAINIAC AI — Render Blueprint (web service only)
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: brainiac
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BRAINIAC_SECRET
+        generateValue: true
+      - key: BRAINIAC_REEL_OUTPUT_DIR
+        value: /var/data/reels
+      - key: BRAINIAC_REEL_PUBLIC_BASE_URL
+        sync: false
+      - key: BRAINIAC_REEL_SCHEDULER_INTERVAL_S
+        value: "30"
+      - key: BRAINIAC_REEL_JOB_TTL_DAYS
+        value: "30"
+      - key: CORS_ORIGINS
+        value: https://your-frontend.example.com
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+      - key: INSTAGRAM_USER_ID
+        sync: false
+      - key: TIKTOK_ACCESS_TOKEN
+        sync: false
+      - key: YOUTUBE_ACCESS_TOKEN
+        sync: false
+      - key: YOUTUBE_PRIVACY_STATUS
+        value: public
+      - key: FACEBOOK_ACCESS_TOKEN
+        sync: false
+      - key: FACEBOOK_PAGE_ID
+        sync: false
+    disk:
+      name: reel-output
+      mountPath: /var/data/reels
+      sizeGB: 10

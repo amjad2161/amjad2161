@@ -23,7 +23,7 @@ def _print_banner() -> None:
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BRAINIAC AI — AUTONOMOUS SUPER INTELLIGENCE              ║
-║                        v1.1.1 REELMAKER                          ║
+║                        v1.2.0 REELMAKER                          ║
 ╚══════════════════════════════════════════════════════════════════╝
 """)
 
@@ -48,8 +48,9 @@ async def _cmd_status() -> int:
     sonic = SonicMatrix()
     creative = CreativeEngine()
     nexus = NexusSync()
+    neuro = NeuroCore()
     modules: dict[str, _DiagnosticModule] = {
-        "NEURO-CORE      ": NeuroCore(),
+        "NEURO-CORE      ": neuro,
         "ORBITAL-NAV     ": OrbitalNav(),
         "SONIC-MATRIX    ": sonic,
         "SATLINK-X       ": SatLink(),
@@ -58,7 +59,7 @@ async def _cmd_status() -> int:
         "CYBER-SHIELD    ": CyberShield(),
         "CREATIVE-ENGINE ": creative,
         "OMNI-VISION     ": OmniVision(),
-        "REEL-MAKER      ": ReelMaker(sonic=sonic, creative=creative, nexus=nexus),
+        "REEL-MAKER      ": ReelMaker(sonic=sonic, creative=creative, nexus=nexus, neuro=neuro),
     }
 
     print("┌──────────────────┬────────────┐")
@@ -76,6 +77,7 @@ async def _cmd_demo() -> int:
     from brainiac.core import (
         CreativeEngine,
         CyberShield,
+        NeuroCore,
         NexusSync,
         OrbitalNav,
         ReelMaker,
@@ -144,7 +146,8 @@ async def _cmd_demo() -> int:
 
     print("[7/7] Composing REEL-MAKER viral preview…")
     sonic = SonicMatrix()
-    reel = ReelMaker(sonic=sonic, creative=creative, nexus=nexus)
+    neuro = NeuroCore()
+    reel = ReelMaker(sonic=sonic, creative=creative, nexus=nexus, neuro=neuro)
     job = await reel.compose(
         "BRAINIAC autonomous AI demo",
         style=ReelStyle.VIRAL_HOOK,
@@ -165,12 +168,18 @@ async def _cmd_demo() -> int:
 async def _cmd_reel(topic: str) -> int:
     from pathlib import Path
 
-    from brainiac.core import CreativeEngine, NexusSync, ReelMaker, SonicMatrix
+    from brainiac.core import CreativeEngine, NeuroCore, NexusSync, ReelMaker, SonicMatrix
     from brainiac.core.reel_maker import Platform, ReelStyle
 
     _print_banner()
     sonic = SonicMatrix()
-    reel = ReelMaker(sonic=sonic, creative=CreativeEngine(), nexus=NexusSync())
+    neuro = NeuroCore()
+    reel = ReelMaker(
+        sonic=sonic,
+        creative=CreativeEngine(),
+        nexus=NexusSync(),
+        neuro=neuro,
+    )
     print(f"▶ Composing reel: {topic!r}\n")
     job = await reel.compose(
         topic,

@@ -1,3 +1,12 @@
+## [1.2.0] – REELMAKER NeuroCore, scheduler, publishers
+
+- NeuroCore-powered reel scripts via `use_ai_script` on compose (falls back to templates when API key missing or parse fails).
+- Background scheduler processes due `scheduled_publish_at` jobs and TTL cleanup (`BRAINIAC_REEL_JOB_TTL_DAYS`).
+- `DELETE /api/v1/reel/jobs/{job_id}` removes persisted jobs and optional media files.
+- YouTube resumable upload, TikTok init+upload, Facebook `file_url` or resumable upload.
+- `render.yaml` Blueprint for Render web service deployment.
+- ReelMaker wired with NeuroCore in API lifespan, Watchdog factory, and CLI.
+
 ## [1.1.1] – REELMAKER persistence
 
 - Reel jobs persist as JSON under `{BRAINIAC_REEL_OUTPUT_DIR}/jobs/` and reload on `ReelMaker` init (survives restarts and watchdog module rebuilds).
