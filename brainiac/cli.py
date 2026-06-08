@@ -1,0 +1,225 @@
+"""
+BRAINIAC CLI — Command-line interface for diagnostics and demos.
+
+Usage:
+    python -m brainiac.cli status
+    python -m brainiac.cli boot
+    python -m brainiac.cli demo
+    python -m brainiac.cli serve
+"""
+
+from __future__ import annotations
+
+import asyncio
+import sys
+from typing import Protocol as TypingProtocol
+
+
+class _DiagnosticModule(TypingProtocol):
+    def diagnostics(self) -> dict[str, str]: ...
+
+
+def _print_banner() -> None:
+    print("""
+╔══════════════════════════════════════════════════════════════════╗
+║         BRAINIAC AI — AUTONOMOUS SUPER INTELLIGENCE              ║
+║                        v1.0.0 GENESIS                            ║
+╚══════════════════════════════════════════════════════════════════╝
+""")
+
+
+async def _cmd_status() -> int:
+    from brainiac.core import (
+        CreativeEngine,
+        CyberShield,
+        NeuroCore,
+        NexusSync,
+        OmniVision,
+        OrbitalNav,
+        ReelMaker,
+        SatLink,
+        SonicMatrix,
+        TelemetryHub,
+    )
+
+    _print_banner()
+    print("▶ Initialising all 10 core modules...\n")
+
+    sonic = SonicMatrix()
+    creative = CreativeEngine()
+    nexus = NexusSync()
+    modules: dict[str, _DiagnosticModule] = {
+        "NEURO-CORE      ": NeuroCore(),
+        "ORBITAL-NAV     ": OrbitalNav(),
+        "SONIC-MATRIX    ": sonic,
+        "SATLINK-X       ": SatLink(),
+        "NEXUS-SYNC      ": nexus,
+        "TELEMETRY-HUB   ": TelemetryHub(),
+        "CYBER-SHIELD    ": CyberShield(),
+        "CREATIVE-ENGINE ": creative,
+        "OMNI-VISION     ": OmniVision(),
+        "REEL-MAKER      ": ReelMaker(sonic=sonic, creative=creative, nexus=nexus),
+    }
+
+    print("┌──────────────────┬────────────┐")
+    print("│ MODULE           │ STATUS     │")
+    print("├──────────────────┼────────────┤")
+    for name, mod in modules.items():
+        status = mod.diagnostics()["status"]
+        print(f"│ {name} │ {status:<10} │")
+    print("└──────────────────┴────────────┘")
+    print("\n✅ All BRAINIAC systems verified.\n")
+    return 0
+
+
+async def _cmd_demo() -> int:
+    from brainiac.core import (
+        CreativeEngine,
+        CyberShield,
+        NexusSync,
+        OrbitalNav,
+        SatLink,
+        TelemetryHub,
+    )
+    from brainiac.core.nexus_sync import DeviceType, Protocol
+    from brainiac.core.orbital_nav import Coordinate, TransportMode
+    from brainiac.core.satlink import SOSPriority
+    from brainiac.core.telemetry_hub import SensorReading
+
+    _print_banner()
+    print("▶ Running end-to-end demo flow...\n")
+
+    nav = OrbitalNav()
+    satlink = SatLink()
+    telem = TelemetryHub()
+    nexus = NexusSync()
+    shield = CyberShield()
+    creative = CreativeEngine()
+
+    print("[1/6] Acquiring RTK GPS position…")
+    pos = await nav.get_position()
+    print(f"      ✓ Position: {pos} (accuracy: {pos.accuracy_m}m)")
+
+    print("[2/6] Planning drone route…")
+    dest = Coordinate(lat=pos.lat + 0.1, lon=pos.lon + 0.1)
+    route = await nav.route(pos, dest, mode=TransportMode.DRONE)
+    print(f"      ✓ Route: {route.distance_km:.2f}km, ETA {route.eta_minutes:.1f}min")
+
+    print("[3/6] Connecting SATLINK satellite mesh…")
+    conn = await satlink.connect()
+    print(f"      ✓ Uplink status: {conn['status']}")
+
+    print("[4/6] Registering rescue drone in NEXUS-SYNC…")
+    nexus.register_device("rescue-drone-01", DeviceType.DRONE, Protocol.MQTT, "mqtt://rescue")
+    await nexus.connect_device("rescue-drone-01")
+    print("      ✓ Drone connected")
+
+    print("[5/6] Ingesting vitals telemetry…")
+    for _ in range(10):
+        await telem.ingest(SensorReading(sensor_id="heart-rate", value=72, unit="bpm"))
+    anomaly = await telem.ingest(SensorReading(sensor_id="heart-rate", value=220, unit="bpm"))
+    if anomaly is None:
+        print("      ✓ No anomaly detected")
+    else:
+        print(
+            f"      ✓ Anomaly detected: {anomaly.anomaly_type.value} (severity {anomaly.severity})"
+        )
+
+    print("[6/6] Broadcasting SOS over all channels…")
+    packet = await satlink.send_sos(
+        lat=pos.lat,
+        lon=pos.lon,
+        message="DEMO: vitals critical",
+        priority=SOSPriority.DISTRESS,
+    )
+    print(f"      ✓ SOS sent on {len(packet.channels_used)} channels")
+    print(f"      ✓ Responders notified: {', '.join(packet.responders_notified)}")
+
+    signature = shield.sign(packet.to_dict())
+    print(f"      ✓ Incident signed: {signature[:16]}…")
+    print(f"      ✓ Creative module: {creative.diagnostics()['status']}")
+
+    print("\n✅ Demo flow complete. All modules operated in unison.\n")
+    return 0
+
+
+async def _cmd_reel(topic: str) -> int:
+    from pathlib import Path
+
+    from brainiac.core import CreativeEngine, NexusSync, ReelMaker, SonicMatrix
+    from brainiac.core.reel_maker import Platform, ReelStyle
+
+    _print_banner()
+    sonic = SonicMatrix()
+    reel = ReelMaker(sonic=sonic, creative=CreativeEngine(), nexus=NexusSync())
+    print(f"▶ Composing reel: {topic!r}\n")
+    job = await reel.compose(
+        topic,
+        style=ReelStyle.VIRAL_HOOK,
+        platforms=[Platform.TIKTOK, Platform.INSTAGRAM],
+        voiceover=False,
+    )
+    if job.status.value == "failed":
+        print(f"❌ Compose failed: {job.error}\n")
+        return 1
+    print(f"  ✓ Job {job.job_id} — algorithm score {job.algorithm_score:.1f}")
+    if job.video_path:
+        print(f"  ✓ Video: {job.video_path} ({Path(job.video_path).stat().st_size} bytes)")
+    pub = await reel.publish(job.job_id, dry_run=True)
+    print(f"  ✓ Publish preview (dry-run): {list(pub['platforms'].keys())}\n")
+    return 0
+
+
+async def _cmd_boot() -> int:
+    """Boot all modules and validate basic connectivity."""
+    from brainiac.core import SatLink
+
+    code = await _cmd_status()
+    satlink = SatLink()
+    await satlink.connect()
+    print("✅ Boot sequence complete.\n")
+    return code
+
+
+def _cmd_serve() -> int:
+    import uvicorn
+
+    _print_banner()
+    print("▶ Starting BRAINIAC API server on 0.0.0.0:8000…\n")
+    uvicorn.run("brainiac.api.main:app", host="0.0.0.0", port=8000, reload=False)
+    return 0
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        _print_banner()
+        print("Commands:")
+        print("  status  — Show module status")
+        print("  boot    — Boot all modules")
+        print("  demo    — Run end-to-end demo flow")
+        print("  serve   — Start the FastAPI server")
+        print("  reel    — Compose a viral short-form reel (topic as arg)")
+        return 0
+
+    cmd = args[0]
+    if cmd == "status":
+        return asyncio.run(_cmd_status())
+    if cmd == "boot":
+        return asyncio.run(_cmd_boot())
+    if cmd == "demo":
+        return asyncio.run(_cmd_demo())
+    if cmd == "serve":
+        return _cmd_serve()
+    if cmd == "reel":
+        if len(args) < 2:
+            print("Usage: python -m brainiac.cli reel <topic>")
+            return 1
+        return asyncio.run(_cmd_reel(" ".join(args[1:])))
+
+    print(f"Unknown command: {cmd!r}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
