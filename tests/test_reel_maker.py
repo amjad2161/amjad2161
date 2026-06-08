@@ -75,3 +75,37 @@ async def test_hook_type_override(reel_maker: ReelMaker) -> None:
     )
     assert job.script is not None
     assert job.script.hook_type == HookType.SHOCK_STAT
+
+
+@pytest.mark.asyncio
+async def test_job_persistence_across_instances(tmp_path: Path) -> None:
+    maker1 = ReelMaker(output_dir=tmp_path)
+    job = await maker1.compose(
+        "persist test",
+        platforms=[Platform.TIKTOK],
+        voiceover=False,
+    )
+    assert job.status.value == "ready"
+
+    maker2 = ReelMaker(output_dir=tmp_path)
+    loaded = maker2.get_job(job.job_id)
+    assert loaded is not None
+    assert loaded.topic == "persist test"
+    assert loaded.status.value == "ready"
+    assert loaded.script is not None
+    assert Path(loaded.video_path or "").is_file()
+    assert (tmp_path / "jobs" / f"{job.job_id}.json").is_file()
+
+
+@pytest.mark.asyncio
+async def test_publish_payload_includes_public_video_url(
+    reel_maker: ReelMaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("BRAINIAC_REEL_PUBLIC_BASE_URL", "https://api.example.com")
+    from brainiac.core import reel_maker as rm
+
+    monkeypatch.setattr(rm, "PUBLIC_BASE_URL", "https://api.example.com")
+
+    job = await reel_maker.compose("public url test", voiceover=False)
+    payload = reel_maker._build_publish_payload(job, Platform.INSTAGRAM)
+    assert payload["video_url"] == f"https://api.example.com/api/v1/reel/jobs/{job.job_id}/video"

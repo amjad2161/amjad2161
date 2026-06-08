@@ -8,6 +8,7 @@ Composes vertical 9:16 video with hooks, captions, voiceover, and auto-posting.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shutil
 import subprocess
@@ -27,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 log = structlog.get_logger("brainiac.reel_maker")
 
 OUTPUT_DIR = Path(os.getenv("BRAINIAC_REEL_OUTPUT_DIR", "/tmp/brainiac-reels"))
+PUBLIC_BASE_URL = os.getenv("BRAINIAC_REEL_PUBLIC_BASE_URL", "").rstrip("/")
 
 
 class Platform(str, Enum):
@@ -233,6 +235,20 @@ class ReelScript:
             "on_screen_text": self.on_screen_text,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReelScript:
+        return cls(
+            hook=data["hook"],
+            body_lines=list(data["body_lines"]),
+            cta=data["cta"],
+            hook_type=HookType(data["hook_type"]),
+            duration_s=float(data["duration_s"]),
+            caption=data["caption"],
+            hashtags=list(data["hashtags"]),
+            title=data["title"],
+            on_screen_text=list(data["on_screen_text"]),
+        )
+
 
 @dataclass
 class ReelJob:
@@ -283,6 +299,28 @@ class ReelJob:
             "progress_pct": self.progress_pct,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReelJob:
+        script_data = data.get("script")
+        script = ReelScript.from_dict(script_data) if script_data else None
+        return cls(
+            job_id=data["job_id"],
+            topic=data["topic"],
+            style=ReelStyle(data["style"]),
+            platforms=[Platform(p) for p in data["platforms"]],
+            status=JobStatus(data["status"]),
+            script=script,
+            video_path=data.get("video_path"),
+            thumbnail_path=data.get("thumbnail_path"),
+            audio_path=data.get("audio_path"),
+            publish_results=dict(data.get("publish_results") or {}),
+            algorithm_score=float(data.get("algorithm_score", 0.0)),
+            created_at=float(data.get("created_at", time.time())),
+            completed_at=data.get("completed_at"),
+            error=data.get("error"),
+            progress_pct=float(data.get("progress_pct", 0.0)),
+        )
+
 
 class ReelMaker:
     """
@@ -308,7 +346,12 @@ class ReelMaker:
         self._jobs: dict[str, ReelJob] = {}
         self._completed_count = 0
         self._publish_count = 0
-        log.info("reel_maker.init", output_dir=str(self._output_dir))
+        self._load_jobs()
+        log.info(
+            "reel_maker.init",
+            output_dir=str(self._output_dir),
+            jobs_loaded=len(self._jobs),
+        )
 
     def set_dependencies(
         self, *, sonic: Any = None, creative: Any = None, nexus: Any = None
@@ -383,6 +426,7 @@ class ReelMaker:
             status=JobStatus.QUEUED,
         )
         self._jobs[job_id] = job
+        self._save_job(job)
 
         try:
             job.status = JobStatus.SCRIPTING
@@ -427,6 +471,7 @@ class ReelMaker:
             job.status = JobStatus.FAILED
             job.error = str(exc)
             log.error("reel_maker.compose_failed", job_id=job_id, error=str(exc))
+        self._save_job(job)
         return job
 
     def get_job(self, job_id: str) -> ReelJob | None:
@@ -454,6 +499,7 @@ class ReelMaker:
 
         targets = platforms or job.platforms
         job.status = JobStatus.PUBLISHING
+        self._save_job(job)
         use_dry_run = dry_run if dry_run is not None else not self._any_platform_configured()
 
         results: dict[str, Any] = {}
@@ -476,6 +522,7 @@ class ReelMaker:
         job.publish_results = results
         job.status = JobStatus.PUBLISHED
         self._publish_count += 1
+        self._save_job(job)
         return {"job_id": job_id, "platforms": results, "dry_run": use_dry_run}
 
     # ── Script generation ─────────────────────────────────────────────────────
@@ -804,6 +851,35 @@ class ReelMaker:
             log.warning("reel_maker.mux_failed", error=str(exc))
             return None
 
+    # ── Job persistence ─────────────────────────────────────────────────────────
+
+    def _jobs_dir(self) -> Path:
+        path = self._output_dir / "jobs"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _save_job(self, job: ReelJob) -> None:
+        path = self._jobs_dir() / f"{job.job_id}.json"
+        path.write_text(json.dumps(job.to_dict(), indent=2), encoding="utf-8")
+
+    def _load_jobs(self) -> None:
+        jobs_dir = self._jobs_dir()
+        for path in jobs_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                job = ReelJob.from_dict(data)
+                self._jobs[job.job_id] = job
+                if job.status in (
+                    JobStatus.READY,
+                    JobStatus.PUBLISHING,
+                    JobStatus.PUBLISHED,
+                ):
+                    self._completed_count += 1
+                if job.status == JobStatus.PUBLISHED:
+                    self._publish_count += 1
+            except Exception as exc:
+                log.warning("reel_maker.job_load_failed", path=str(path), error=str(exc))
+
     # ── Social publishing ─────────────────────────────────────────────────────
 
     def _any_platform_configured(self) -> bool:
@@ -825,8 +901,12 @@ class ReelMaker:
 
     def _build_publish_payload(self, job: ReelJob, platform: Platform) -> dict[str, Any]:
         assert job.script is not None
+        video_url = ""
+        if PUBLIC_BASE_URL:
+            video_url = f"{PUBLIC_BASE_URL}/api/v1/reel/jobs/{job.job_id}/video"
         return {
             "video_path": job.video_path,
+            "video_url": video_url,
             "caption": job.script.caption,
             "title": job.script.title,
             "hashtags": job.script.hashtags,
@@ -938,5 +1018,7 @@ class ReelMaker:
             "output_dir": str(self._output_dir),
             "platforms_supported": [p.value for p in Platform],
             "social_configured": self._any_platform_configured(),
+            "public_base_url_configured": bool(PUBLIC_BASE_URL),
+            "jobs_persisted": len(list(self._jobs_dir().glob("*.json"))),
             "ffmpeg_available": shutil.which("ffmpeg") is not None,
         }

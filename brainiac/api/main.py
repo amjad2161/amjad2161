@@ -197,7 +197,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="BRAINIAC AI",
     description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.1.0",
+    version="1.1.1",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -305,14 +305,14 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.1.0"}
+    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.1.1"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.1.0",
+        version="1.1.1",
         modules=dict(app.state.module_health),
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )

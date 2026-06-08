@@ -1,3 +1,8 @@
+## [1.1.1] – REELMAKER persistence
+
+- Reel jobs persist as JSON under `{BRAINIAC_REEL_OUTPUT_DIR}/jobs/` and reload on `ReelMaker` init (survives restarts and watchdog module rebuilds).
+- Optional `BRAINIAC_REEL_PUBLIC_BASE_URL` supplies `video_url` in Instagram publish payloads for Graph API uploads.
+
 ## [1.1.0] – REELMAKER
 
 - Added **REEL-MAKER** module: viral short-form video compose, algorithm scoring, platform specs, dry-run social publish, REST API, and CLI (`brainiac reel`).
