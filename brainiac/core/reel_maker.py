@@ -8,6 +8,9 @@ Composes vertical 9:16 video with hooks, captions, voiceover, and auto-posting.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import hmac
+import json
 import os
 import shutil
 import subprocess
@@ -24,9 +27,25 @@ import numpy as np
 import structlog
 from PIL import Image, ImageDraw, ImageFont
 
+from brainiac.core.social_accounts import get_social_store
+
 log = structlog.get_logger("brainiac.reel_maker")
 
 OUTPUT_DIR = Path(os.getenv("BRAINIAC_REEL_OUTPUT_DIR", "/tmp/brainiac-reels"))
+PUBLIC_BASE_URL = os.getenv("BRAINIAC_REEL_PUBLIC_BASE_URL", "").rstrip("/")
+JOB_TTL_DAYS = int(os.getenv("BRAINIAC_REEL_JOB_TTL_DAYS", "0") or 0)
+SCHEDULER_INTERVAL_S = float(os.getenv("BRAINIAC_REEL_SCHEDULER_INTERVAL_S", "30"))
+WEBHOOK_URL = os.getenv("BRAINIAC_REEL_WEBHOOK_URL", "").strip()
+WEBHOOK_SECRET = os.getenv("BRAINIAC_REEL_WEBHOOK_SECRET", "").strip()
+_DUMMY_API_KEYS = frozenset({"dummy-key-for-ci", "your-anthropic-api-key", ""})
+
+REEL_SCRIPT_SYSTEM = (
+    "You write viral short-form video scripts optimized for retention and platform algorithms. "
+    "Respond with ONLY valid JSON (no markdown fences) matching this schema:\n"
+    '{"hook":"string","body_lines":["string","string","string"],"cta":"string",'
+    '"hook_type":"curiosity_gap|shock_stat|pov|before_after|listicle|controversy|question",'
+    '"title":"string","on_screen_text":["string","string","string","string"]}'
+)
 
 
 class Platform(str, Enum):
@@ -34,6 +53,40 @@ class Platform(str, Enum):
     TIKTOK = "tiktok"
     YOUTUBE = "youtube"
     FACEBOOK = "facebook"
+
+
+_SOCIAL_ENV: dict[Platform, dict[str, str]] = {
+    Platform.INSTAGRAM: {
+        "token": "INSTAGRAM_ACCESS_TOKEN",
+        "extra": "INSTAGRAM_USER_ID",
+    },
+    Platform.TIKTOK: {"token": "TIKTOK_ACCESS_TOKEN"},
+    Platform.YOUTUBE: {"token": "YOUTUBE_ACCESS_TOKEN"},
+    Platform.FACEBOOK: {
+        "token": "FACEBOOK_ACCESS_TOKEN",
+        "extra": "FACEBOOK_PAGE_ID",
+    },
+}
+
+_SOCIAL_OAUTH_HINTS: dict[Platform, str] = {
+    Platform.INSTAGRAM: (
+        "Create a Meta app, add Instagram Graph API, connect a Business/Creator account, "
+        "and generate a long-lived User access token with instagram_content_publish. "
+        "Set INSTAGRAM_ACCESS_TOKEN and INSTAGRAM_USER_ID (IG user id)."
+    ),
+    Platform.TIKTOK: (
+        "Register at developers.tiktok.com, create an app with Content Posting API, "
+        "complete OAuth for the creator, and set TIKTOK_ACCESS_TOKEN."
+    ),
+    Platform.YOUTUBE: (
+        "Enable YouTube Data API v3 in Google Cloud, OAuth consent screen, and upload scope "
+        "youtube.upload. Set YOUTUBE_ACCESS_TOKEN (refresh token flow recommended for production)."
+    ),
+    Platform.FACEBOOK: (
+        "Create a Meta app with Pages API, obtain a Page access token with pages_manage_posts, "
+        "and set FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID."
+    ),
+}
 
 
 class ReelStyle(str, Enum):
@@ -233,6 +286,20 @@ class ReelScript:
             "on_screen_text": self.on_screen_text,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReelScript:
+        return cls(
+            hook=data["hook"],
+            body_lines=list(data["body_lines"]),
+            cta=data["cta"],
+            hook_type=HookType(data["hook_type"]),
+            duration_s=float(data["duration_s"]),
+            caption=data["caption"],
+            hashtags=list(data["hashtags"]),
+            title=data["title"],
+            on_screen_text=list(data["on_screen_text"]),
+        )
+
 
 @dataclass
 class ReelJob:
@@ -251,6 +318,9 @@ class ReelJob:
     completed_at: float | None = None
     error: str | None = None
     progress_pct: float = 0.0
+    script_source: str = "template"
+    scheduled_publish_at: float | None = None
+    scheduled_platforms: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -281,7 +351,35 @@ class ReelJob:
             "completed_at": self.completed_at,
             "error": self.error,
             "progress_pct": self.progress_pct,
+            "script_source": self.script_source,
+            "scheduled_publish_at": self.scheduled_publish_at,
+            "scheduled_platforms": self.scheduled_platforms,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ReelJob:
+        script_data = data.get("script")
+        script = ReelScript.from_dict(script_data) if script_data else None
+        return cls(
+            job_id=data["job_id"],
+            topic=data["topic"],
+            style=ReelStyle(data["style"]),
+            platforms=[Platform(p) for p in data["platforms"]],
+            status=JobStatus(data["status"]),
+            script=script,
+            video_path=data.get("video_path"),
+            thumbnail_path=data.get("thumbnail_path"),
+            audio_path=data.get("audio_path"),
+            publish_results=dict(data.get("publish_results") or {}),
+            algorithm_score=float(data.get("algorithm_score", 0.0)),
+            created_at=float(data.get("created_at", time.time())),
+            completed_at=data.get("completed_at"),
+            error=data.get("error"),
+            progress_pct=float(data.get("progress_pct", 0.0)),
+            script_source=str(data.get("script_source", "template")),
+            scheduled_publish_at=data.get("scheduled_publish_at"),
+            scheduled_platforms=data.get("scheduled_platforms"),
+        )
 
 
 class ReelMaker:
@@ -298,20 +396,32 @@ class ReelMaker:
         sonic: Any | None = None,
         creative: Any | None = None,
         nexus: Any | None = None,
+        neuro: Any | None = None,
         output_dir: Path | None = None,
     ) -> None:
         self._sonic = sonic
         self._creative = creative
         self._nexus = nexus
+        self._neuro = neuro
         self._output_dir = output_dir or OUTPUT_DIR
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._jobs: dict[str, ReelJob] = {}
         self._completed_count = 0
         self._publish_count = 0
-        log.info("reel_maker.init", output_dir=str(self._output_dir))
+        self._load_jobs()
+        log.info(
+            "reel_maker.init",
+            output_dir=str(self._output_dir),
+            jobs_loaded=len(self._jobs),
+        )
 
     def set_dependencies(
-        self, *, sonic: Any = None, creative: Any = None, nexus: Any = None
+        self,
+        *,
+        sonic: Any = None,
+        creative: Any = None,
+        nexus: Any = None,
+        neuro: Any = None,
     ) -> None:
         if sonic is not None:
             self._sonic = sonic
@@ -319,6 +429,8 @@ class ReelMaker:
             self._creative = creative
         if nexus is not None:
             self._nexus = nexus
+        if neuro is not None:
+            self._neuro = neuro
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -372,6 +484,7 @@ class ReelMaker:
         hook_type: HookType | None = None,
         niche_hashtags: list[str] | None = None,
         voiceover: bool = True,
+        use_ai_script: bool | None = None,
     ) -> ReelJob:
         platforms = platforms or [Platform.TIKTOK, Platform.INSTAGRAM]
         job_id = uuid.uuid4().hex[:12]
@@ -383,6 +496,7 @@ class ReelMaker:
             status=JobStatus.QUEUED,
         )
         self._jobs[job_id] = job
+        self._save_job(job)
 
         try:
             job.status = JobStatus.SCRIPTING
@@ -392,10 +506,17 @@ class ReelMaker:
             target_duration = duration_s or spec.optimal_duration_s
             target_duration = max(spec.min_duration_s, min(spec.max_duration_s, target_duration))
 
-            script = self._generate_script(
-                topic, style, primary, target_duration, hook_type, niche_hashtags
+            script, script_source = await self._generate_script_with_ai(
+                topic,
+                style,
+                primary,
+                target_duration,
+                hook_type,
+                niche_hashtags,
+                use_ai_script=use_ai_script,
             )
             job.script = script
+            job.script_source = script_source
             job.algorithm_score = self._score_script(script, platforms)
             job.progress_pct = 35.0
 
@@ -427,6 +548,11 @@ class ReelMaker:
             job.status = JobStatus.FAILED
             job.error = str(exc)
             log.error("reel_maker.compose_failed", job_id=job_id, error=str(exc))
+        self._save_job(job)
+        if job.status == JobStatus.READY:
+            await self._emit_webhook("compose.ready", job)
+        elif job.status == JobStatus.FAILED:
+            await self._emit_webhook("compose.failed", job)
         return job
 
     def get_job(self, job_id: str) -> ReelJob | None:
@@ -443,6 +569,7 @@ class ReelMaker:
         *,
         schedule_at: float | None = None,
         dry_run: bool | None = None,
+        account_ids: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         job = self._jobs.get(job_id)
         if not job:
@@ -453,13 +580,33 @@ class ReelMaker:
             raise ValueError("Video file missing")
 
         targets = platforms or job.platforms
-        job.status = JobStatus.PUBLISHING
         use_dry_run = dry_run if dry_run is not None else not self._any_platform_configured()
+
+        if schedule_at is not None and schedule_at > time.time():
+            job.scheduled_publish_at = schedule_at
+            job.scheduled_platforms = [p.value for p in targets]
+            self._save_job(job)
+            response = {
+                "job_id": job_id,
+                "status": "scheduled",
+                "scheduled_at": schedule_at,
+                "platforms": job.scheduled_platforms,
+                "dry_run": use_dry_run,
+            }
+            await self._emit_webhook("publish.scheduled", job, extra=response)
+            return response
+
+        job.status = JobStatus.PUBLISHING
+        self._save_job(job)
 
         results: dict[str, Any] = {}
         for platform in targets:
             adapter = self._publisher_for(platform)
-            payload = self._build_publish_payload(job, platform)
+            payload = self._build_publish_payload(
+                job,
+                platform,
+                account_id=(account_ids or {}).get(platform.value),
+            )
             if schedule_at:
                 payload["scheduled_at"] = schedule_at
             result = await adapter(payload, dry_run=use_dry_run)
@@ -475,10 +622,193 @@ class ReelMaker:
 
         job.publish_results = results
         job.status = JobStatus.PUBLISHED
+        job.scheduled_publish_at = None
+        job.scheduled_platforms = None
         self._publish_count += 1
-        return {"job_id": job_id, "platforms": results, "dry_run": use_dry_run}
+        self._save_job(job)
+        response = {"job_id": job_id, "platforms": results, "dry_run": use_dry_run}
+        await self._emit_webhook("publish.completed", job, extra=response)
+        return response
+
+    async def process_scheduled_publishes(self) -> list[dict[str, Any]]:
+        """Publish jobs whose scheduled_publish_at has passed."""
+        now = time.time()
+        processed: list[dict[str, Any]] = []
+        for job in list(self._jobs.values()):
+            if job.scheduled_publish_at is None or job.scheduled_publish_at > now:
+                continue
+            if job.status not in (JobStatus.READY, JobStatus.PUBLISHED):
+                continue
+            platforms = (
+                [Platform(p) for p in job.scheduled_platforms] if job.scheduled_platforms else None
+            )
+            try:
+                result = await self.publish(
+                    job.job_id,
+                    platforms=platforms,
+                    schedule_at=None,
+                    dry_run=not self._any_platform_configured(),
+                )
+                processed.append(result)
+            except Exception as exc:
+                log.warning(
+                    "reel_maker.scheduled_publish_failed",
+                    job_id=job.job_id,
+                    error=str(exc),
+                )
+        return processed
+
+    def delete_job(self, job_id: str, *, remove_files: bool = True) -> bool:
+        job = self._jobs.pop(job_id, None)
+        if job is None:
+            return False
+        if remove_files:
+            for path_str in (job.video_path, job.thumbnail_path, job.audio_path):
+                if path_str:
+                    with contextlib.suppress(OSError):
+                        Path(path_str).unlink(missing_ok=True)
+        job_json = self._jobs_dir() / f"{job_id}.json"
+        with contextlib.suppress(OSError):
+            job_json.unlink(missing_ok=True)
+        return True
+
+    def cleanup_expired_jobs(self) -> int:
+        """Remove jobs older than BRAINIAC_REEL_JOB_TTL_DAYS (0 = disabled)."""
+        if JOB_TTL_DAYS <= 0:
+            return 0
+        cutoff = time.time() - JOB_TTL_DAYS * 86400
+        removed = 0
+        for job_id, job in list(self._jobs.items()):
+            if job.created_at >= cutoff:
+                continue
+            if self.delete_job(job_id):
+                removed += 1
+        return removed
 
     # ── Script generation ─────────────────────────────────────────────────────
+
+    def _neuro_api_available(self) -> bool:
+        key = os.getenv("ANTHROPIC_API_KEY", "")
+        return bool(key) and key not in _DUMMY_API_KEYS
+
+    def _should_use_ai_script(self, use_ai_script: bool | None) -> bool:
+        if use_ai_script is False:
+            return False
+        if use_ai_script is True:
+            return self._neuro is not None and self._neuro_api_available()
+        return self._neuro is not None and self._neuro_api_available()
+
+    async def _generate_script_with_ai(
+        self,
+        topic: str,
+        style: ReelStyle,
+        platform: Platform,
+        duration_s: float,
+        hook_type: HookType | None,
+        niche_hashtags: list[str] | None,
+        *,
+        use_ai_script: bool | None = None,
+    ) -> tuple[ReelScript, str]:
+        if not self._should_use_ai_script(use_ai_script):
+            return (
+                self._generate_script(
+                    topic, style, platform, duration_s, hook_type, niche_hashtags
+                ),
+                "template",
+            )
+        try:
+            script = await self._generate_script_neuro(
+                topic, style, platform, duration_s, hook_type, niche_hashtags
+            )
+            return script, "neuro_core"
+        except Exception as exc:
+            log.warning("reel_maker.ai_script_fallback", error=str(exc))
+            return (
+                self._generate_script(
+                    topic, style, platform, duration_s, hook_type, niche_hashtags
+                ),
+                "template",
+            )
+
+    async def _generate_script_neuro(
+        self,
+        topic: str,
+        style: ReelStyle,
+        platform: Platform,
+        duration_s: float,
+        hook_type: HookType | None,
+        niche_hashtags: list[str] | None,
+    ) -> ReelScript:
+        from brainiac.core.neuro_core import ReasoningDepth
+
+        assert self._neuro is not None
+        hook_type = hook_type or self._pick_hook_type(style)
+        spec = PLATFORM_SPECS[platform]
+        prompt = (
+            f"Topic: {topic}\n"
+            f"Style: {style.value}\n"
+            f"Platform: {platform.value}\n"
+            f"Target duration: {duration_s}s (hook in first {spec.hook_window_s}s)\n"
+            f"Preferred hook type: {hook_type.value}\n"
+            f"Max hashtags: {spec.max_hashtags}\n"
+            "Write punchy on-screen text (max 8 words per line). "
+            "Hook must stop the scroll in under 3 seconds."
+        )
+        thought = await self._neuro.think(
+            prompt,
+            depth=ReasoningDepth.FAST,
+            system_override=REEL_SCRIPT_SYSTEM,
+            use_cache=True,
+        )
+        data = self._parse_script_json(thought.content)
+        hook = str(data["hook"])
+        body = [str(line) for line in data["body_lines"]][:5]
+        cta = str(data.get("cta") or "Follow for more")
+        parsed_hook = HookType(data.get("hook_type", hook_type.value))
+        on_screen = [str(t) for t in data.get("on_screen_text", [hook, *body[:2], cta])][:6]
+        title = str(data.get("title") or f"{hook} | {topic}")
+        if platform == Platform.YOUTUBE and "#Shorts" not in title:
+            title = f"{title} #Shorts"
+
+        tags = list(TRENDING_HASHTAGS.get("general", []))
+        tags.extend(TRENDING_HASHTAGS.get(platform.value, []))
+        if niche_hashtags:
+            tags.extend(niche_hashtags)
+        tags = list(dict.fromkeys(tags))[: spec.max_hashtags]
+        niche_tag = f"#{topic.replace(' ', '').lower()[:20]}"
+        if niche_tag not in tags:
+            tags.insert(0, niche_tag)
+
+        caption = f"{hook}\n\n" + "\n".join(body) + f"\n\n{cta}\n" + " ".join(tags)
+        return ReelScript(
+            hook=hook,
+            body_lines=body,
+            cta=cta,
+            hook_type=parsed_hook,
+            duration_s=duration_s,
+            caption=caption,
+            hashtags=tags,
+            title=title,
+            on_screen_text=on_screen,
+        )
+
+    @staticmethod
+    def _parse_script_json(text: str) -> dict[str, Any]:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+        data = json.loads(cleaned)
+        if not isinstance(data, dict):
+            raise ValueError("script JSON must be an object")
+        for key in ("hook", "body_lines"):
+            if key not in data:
+                raise ValueError(f"missing required field: {key}")
+        return data
 
     def _generate_script(
         self,
@@ -804,16 +1134,69 @@ class ReelMaker:
             log.warning("reel_maker.mux_failed", error=str(exc))
             return None
 
+    # ── Job persistence ─────────────────────────────────────────────────────────
+
+    def _jobs_dir(self) -> Path:
+        path = self._output_dir / "jobs"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _save_job(self, job: ReelJob) -> None:
+        path = self._jobs_dir() / f"{job.job_id}.json"
+        path.write_text(json.dumps(job.to_dict(), indent=2), encoding="utf-8")
+
+    def _load_jobs(self) -> None:
+        jobs_dir = self._jobs_dir()
+        for path in jobs_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                job = ReelJob.from_dict(data)
+                self._jobs[job.job_id] = job
+                if job.status in (
+                    JobStatus.READY,
+                    JobStatus.PUBLISHING,
+                    JobStatus.PUBLISHED,
+                ):
+                    self._completed_count += 1
+                if job.status == JobStatus.PUBLISHED:
+                    self._publish_count += 1
+            except Exception as exc:
+                log.warning("reel_maker.job_load_failed", path=str(path), error=str(exc))
+
     # ── Social publishing ─────────────────────────────────────────────────────
 
+    def _social_store(self):
+        return get_social_store(self._output_dir)
+
     def _any_platform_configured(self) -> bool:
-        keys = (
-            "INSTAGRAM_ACCESS_TOKEN",
-            "TIKTOK_ACCESS_TOKEN",
-            "YOUTUBE_ACCESS_TOKEN",
-            "FACEBOOK_ACCESS_TOKEN",
-        )
-        return any(os.getenv(k) for k in keys)
+        return self._social_store().any_platform_configured()
+
+    def _env_credentials(self, platform: Platform) -> dict[str, str]:
+        env = _SOCIAL_ENV[platform]
+        creds: dict[str, str] = {}
+        token = os.getenv(env["token"])
+        if token:
+            creds["access_token"] = token
+        extra_key = env.get("extra")
+        if extra_key:
+            extra_val = os.getenv(extra_key)
+            if extra_val:
+                if platform == Platform.INSTAGRAM:
+                    creds["user_id"] = extra_val
+                elif platform == Platform.FACEBOOK:
+                    creds["page_id"] = extra_val
+        return creds
+
+    def _resolve_credentials(
+        self,
+        platform: Platform,
+        account_id: str | None = None,
+    ) -> dict[str, str]:
+        store = self._social_store()
+        creds = store.credentials_for_platform(platform.value, account_id=account_id)
+        if creds:
+            return creds
+        return self._env_credentials(platform)
 
     def _publisher_for(self, platform: Platform) -> Callable[..., Any]:
         return {
@@ -823,21 +1206,35 @@ class ReelMaker:
             Platform.FACEBOOK: self._publish_facebook,
         }[platform]
 
-    def _build_publish_payload(self, job: ReelJob, platform: Platform) -> dict[str, Any]:
+    def _build_publish_payload(
+        self,
+        job: ReelJob,
+        platform: Platform,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, Any]:
         assert job.script is not None
+        video_url = ""
+        if PUBLIC_BASE_URL:
+            video_url = f"{PUBLIC_BASE_URL}/api/v1/reel/jobs/{job.job_id}/video"
+        credentials = self._resolve_credentials(platform, account_id)
         return {
             "video_path": job.video_path,
+            "video_url": video_url,
             "caption": job.script.caption,
             "title": job.script.title,
             "hashtags": job.script.hashtags,
             "thumbnail_path": job.thumbnail_path,
             "job_id": job.job_id,
             "platform": platform.value,
+            "credentials": credentials,
+            "account_id": account_id,
         }
 
     async def _publish_instagram(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
-        user_id = os.getenv("INSTAGRAM_USER_ID")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
+        user_id = creds.get("user_id")
         if dry_run or not token or not user_id:
             return self._dry_run_result(Platform.INSTAGRAM, payload)
         return await self._http_publish(
@@ -852,42 +1249,233 @@ class ReelMaker:
         )
 
     async def _publish_tiktok(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("TIKTOK_ACCESS_TOKEN")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
         if dry_run or not token:
             return self._dry_run_result(Platform.TIKTOK, payload)
-        return await self._http_publish(
-            "https://open.tiktokapis.com/v2/post/publish/video/init/",
-            {
-                "post_info": {
-                    "title": payload["caption"][:150],
-                    "privacy_level": "PUBLIC_TO_EVERYONE",
-                },
+        video_path = payload.get("video_path")
+        if not video_path or not Path(video_path).is_file():
+            return {
+                "platform": Platform.TIKTOK.value,
+                "status": "error",
+                "error": "video file missing",
+            }
+        import httpx
+
+        video_bytes = Path(video_path).read_bytes()
+        size = len(video_bytes)
+        init_body = {
+            "post_info": {
+                "title": payload["caption"][:150],
+                "privacy_level": "PUBLIC_TO_EVERYONE",
             },
-            Platform.TIKTOK,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+            "source_info": {
+                "source": "FILE_UPLOAD",
+                "video_size": size,
+                "chunk_size": size,
+                "total_chunk_count": 1,
+            },
+        }
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=UTF-8",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                init_resp = await client.post(
+                    "https://open.tiktokapis.com/v2/post/publish/video/init/",
+                    json=init_body,
+                    headers=headers,
+                )
+                init_body_resp = init_resp.json() if init_resp.content else {}
+                if not init_resp.is_success:
+                    return {
+                        "platform": Platform.TIKTOK.value,
+                        "status": "error",
+                        "http_status": init_resp.status_code,
+                        "response": init_body_resp,
+                    }
+                upload_url = (init_body_resp.get("data") or {}).get("upload_url")
+                publish_id = (init_body_resp.get("data") or {}).get("publish_id")
+                if not upload_url:
+                    return {
+                        "platform": Platform.TIKTOK.value,
+                        "status": "submitted",
+                        "http_status": init_resp.status_code,
+                        "response": init_body_resp,
+                    }
+                up_resp = await client.put(
+                    upload_url,
+                    content=video_bytes,
+                    headers={
+                        "Content-Type": "video/mp4",
+                        "Content-Length": str(size),
+                    },
+                )
+                return {
+                    "platform": Platform.TIKTOK.value,
+                    "status": "submitted" if up_resp.is_success else "error",
+                    "http_status": up_resp.status_code,
+                    "publish_id": publish_id,
+                    "init_response": init_body_resp,
+                }
+        except Exception as exc:
+            return {"platform": Platform.TIKTOK.value, "status": "error", "error": str(exc)}
 
     async def _publish_youtube(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("YOUTUBE_ACCESS_TOKEN")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
         if dry_run or not token:
             return self._dry_run_result(Platform.YOUTUBE, payload)
-        return {
-            "platform": Platform.YOUTUBE.value,
-            "status": "queued",
-            "message": "Upload via YouTube Data API resumable upload — configure OAuth refresh token",
-            "title": payload["title"],
+        video_path = payload.get("video_path")
+        if not video_path or not Path(video_path).is_file():
+            return {
+                "platform": Platform.YOUTUBE.value,
+                "status": "error",
+                "error": "video file missing",
+            }
+        import httpx
+
+        metadata = {
+            "snippet": {
+                "title": payload["title"][:100],
+                "description": payload["caption"][:5000],
+                "tags": [h.lstrip("#") for h in payload.get("hashtags", [])][:10],
+                "categoryId": "22",
+            },
+            "status": {
+                "privacyStatus": os.getenv("YOUTUBE_PRIVACY_STATUS", "public"),
+                "selfDeclaredMadeForKids": False,
+            },
         }
+        auth_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json; charset=UTF-8",
+        }
+        try:
+            video_bytes = Path(video_path).read_bytes()
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                init_resp = await client.post(
+                    "https://www.googleapis.com/upload/youtube/v3/videos",
+                    params={"uploadType": "resumable", "part": "snippet,status"},
+                    headers=auth_headers,
+                    json=metadata,
+                )
+                if not init_resp.is_success:
+                    body = init_resp.json() if init_resp.content else {}
+                    return {
+                        "platform": Platform.YOUTUBE.value,
+                        "status": "error",
+                        "http_status": init_resp.status_code,
+                        "response": body,
+                    }
+                upload_url = init_resp.headers.get("location")
+                if not upload_url:
+                    return {
+                        "platform": Platform.YOUTUBE.value,
+                        "status": "error",
+                        "error": "resumable upload URL missing from YouTube response",
+                    }
+                upload_resp = await client.put(
+                    upload_url,
+                    content=video_bytes,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "video/mp4",
+                        "Content-Length": str(len(video_bytes)),
+                    },
+                )
+                body = upload_resp.json() if upload_resp.content else {}
+                return {
+                    "platform": Platform.YOUTUBE.value,
+                    "status": "submitted" if upload_resp.is_success else "error",
+                    "http_status": upload_resp.status_code,
+                    "video_id": body.get("id"),
+                    "response": body,
+                }
+        except Exception as exc:
+            return {"platform": Platform.YOUTUBE.value, "status": "error", "error": str(exc)}
 
     async def _publish_facebook(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("FACEBOOK_ACCESS_TOKEN")
-        page_id = os.getenv("FACEBOOK_PAGE_ID")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
+        page_id = creds.get("page_id")
         if dry_run or not token or not page_id:
             return self._dry_run_result(Platform.FACEBOOK, payload)
-        return await self._http_publish(
-            f"https://graph.facebook.com/v19.0/{page_id}/video_reels",
-            {"access_token": token, "description": payload["caption"][:2200]},
-            Platform.FACEBOOK,
-        )
+        video_url = payload.get("video_url") or ""
+        if video_url:
+            return await self._http_publish(
+                f"https://graph.facebook.com/v19.0/{page_id}/video_reels",
+                {
+                    "access_token": token,
+                    "description": payload["caption"][:2200],
+                    "file_url": video_url,
+                },
+                Platform.FACEBOOK,
+            )
+        video_path = payload.get("video_path")
+        if not video_path or not Path(video_path).is_file():
+            return {
+                "platform": Platform.FACEBOOK.value,
+                "status": "error",
+                "error": "video file or public video_url required for Facebook Reels",
+            }
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                start_resp = await client.post(
+                    f"https://graph.facebook.com/v19.0/{page_id}/video_reels",
+                    data={
+                        "access_token": token,
+                        "upload_phase": "start",
+                        "description": payload["caption"][:2200],
+                    },
+                )
+                start_body = start_resp.json() if start_resp.content else {}
+                if not start_resp.is_success:
+                    return {
+                        "platform": Platform.FACEBOOK.value,
+                        "status": "error",
+                        "http_status": start_resp.status_code,
+                        "response": start_body,
+                    }
+                video_id = start_body.get("video_id")
+                upload_url = start_body.get("upload_url")
+                if not video_id or not upload_url:
+                    return {
+                        "platform": Platform.FACEBOOK.value,
+                        "status": "error",
+                        "error": "Facebook upload session missing video_id or upload_url",
+                        "response": start_body,
+                    }
+                video_bytes = Path(video_path).read_bytes()
+                transfer_resp = await client.post(
+                    upload_url,
+                    content=video_bytes,
+                    headers={"Content-Type": "application/octet-stream"},
+                )
+                finish_resp = await client.post(
+                    f"https://graph.facebook.com/v19.0/{page_id}/video_reels",
+                    data={
+                        "access_token": token,
+                        "upload_phase": "finish",
+                        "video_id": video_id,
+                        "video_state": "PUBLISHED",
+                    },
+                )
+                finish_body = finish_resp.json() if finish_resp.content else {}
+                return {
+                    "platform": Platform.FACEBOOK.value,
+                    "status": "submitted"
+                    if finish_resp.is_success and transfer_resp.is_success
+                    else "error",
+                    "http_status": finish_resp.status_code,
+                    "video_id": video_id,
+                    "response": finish_body,
+                }
+        except Exception as exc:
+            return {"platform": Platform.FACEBOOK.value, "status": "error", "error": str(exc)}
 
     @staticmethod
     def _dry_run_result(platform: Platform, payload: dict[str, Any]) -> dict[str, Any]:
@@ -927,16 +1515,131 @@ class ReelMaker:
         except Exception as exc:
             return {"platform": platform.value, "status": "error", "error": str(exc)}
 
+    # ── Webhooks & social status ──────────────────────────────────────────────
+
+    @staticmethod
+    def _webhook_configured() -> bool:
+        return bool(WEBHOOK_URL)
+
+    def social_status(self) -> dict[str, Any]:
+        from brainiac.core.social_oauth import oauth_providers_status, start_all_connections
+
+        store = self._social_store()
+        public_accounts = store.list_public()
+        accounts_by_platform: dict[str, list[dict[str, Any]]] = {p.value: [] for p in Platform}
+        for account in public_accounts:
+            accounts_by_platform.setdefault(account["platform"], []).append(account)
+
+        platforms: dict[str, Any] = {}
+        for platform in Platform:
+            env = _SOCIAL_ENV[platform]
+            token_set = bool(os.getenv(env["token"]))
+            extra_key = env.get("extra")
+            extra_set = bool(os.getenv(extra_key)) if extra_key else True
+            connected = accounts_by_platform.get(platform.value, [])
+            default_account = store.get_default(platform.value)
+            store_ready = default_account is not None and not (
+                default_account.expires_at and default_account.expires_at <= time.time()
+            )
+            missing: list[str] = []
+            if not token_set and not connected:
+                missing.append(env["token"])
+            if extra_key and not extra_set and not connected:
+                missing.append(extra_key)
+            if platform == Platform.INSTAGRAM and not PUBLIC_BASE_URL:
+                missing.append("BRAINIAC_REEL_PUBLIC_BASE_URL")
+            ready_for_live = (store_ready or (token_set and extra_set)) and (
+                platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)
+            )
+            platforms[platform.value] = {
+                "configured": ready_for_live,
+                "token_set": token_set or bool(connected),
+                "ready_for_live": ready_for_live,
+                "connected_accounts": len(connected),
+                "default_account_id": default_account.id if default_account else None,
+                "missing_env": missing,
+                "oauth_hint": _SOCIAL_OAUTH_HINTS[platform],
+            }
+        oauth_start = start_all_connections()
+        return {
+            "webhook_configured": self._webhook_configured(),
+            "webhook_url_set": bool(WEBHOOK_URL),
+            "webhook_secret_set": bool(WEBHOOK_SECRET),
+            "public_base_url_configured": bool(PUBLIC_BASE_URL),
+            "live_publish_ready": self._any_platform_configured(),
+            "accounts": public_accounts,
+            "accounts_by_platform": accounts_by_platform,
+            "oauth_providers": oauth_providers_status(),
+            "connect_all": oauth_start,
+            "platforms": platforms,
+        }
+
+    async def _emit_webhook(
+        self,
+        event: str,
+        job: ReelJob,
+        *,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        if not WEBHOOK_URL:
+            return
+        payload: dict[str, Any] = {
+            "event": event,
+            "timestamp": time.time(),
+            "job_id": job.job_id,
+            "topic": job.topic,
+            "status": job.status.value,
+            "platforms": [p.value for p in job.platforms],
+            "algorithm_score": job.algorithm_score,
+            "script_source": job.script_source,
+            "error": job.error,
+            "scheduled_publish_at": job.scheduled_publish_at,
+            "scheduled_platforms": job.scheduled_platforms,
+        }
+        if extra:
+            payload.update(extra)
+        body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+        headers = {"Content-Type": "application/json", "User-Agent": "BRAINIAC-REEL-MAKER/1.4"}
+        if WEBHOOK_SECRET:
+            sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+            headers["X-Brainiac-Signature"] = f"sha256={sig}"
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(WEBHOOK_URL, content=body, headers=headers)
+                log.debug(
+                    "reel_maker.webhook_sent",
+                    webhook_event=event,
+                    job_id=job.job_id,
+                    status=resp.status_code,
+                )
+        except Exception as exc:
+            log.warning(
+                "reel_maker.webhook_failed",
+                webhook_event=event,
+                job_id=job.job_id,
+                error=str(exc),
+            )
+
     # ── Diagnostics ───────────────────────────────────────────────────────────
 
     def diagnostics(self) -> dict[str, Any]:
+        scheduled = sum(1 for j in self._jobs.values() if j.scheduled_publish_at is not None)
         return {
             "status": "ONLINE",
             "jobs_total": len(self._jobs),
             "jobs_completed": self._completed_count,
             "jobs_published": self._publish_count,
+            "jobs_scheduled": scheduled,
             "output_dir": str(self._output_dir),
             "platforms_supported": [p.value for p in Platform],
             "social_configured": self._any_platform_configured(),
+            "public_base_url_configured": bool(PUBLIC_BASE_URL),
+            "jobs_persisted": len(list(self._jobs_dir().glob("*.json"))),
             "ffmpeg_available": shutil.which("ffmpeg") is not None,
+            "neuro_configured": self._neuro is not None and self._neuro_api_available(),
+            "job_ttl_days": JOB_TTL_DAYS,
+            "scheduler_interval_s": SCHEDULER_INTERVAL_S,
+            "webhook_configured": self._webhook_configured(),
         }

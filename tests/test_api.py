@@ -66,6 +66,58 @@ def test_reel_trends(client):
     assert "trending_hashtags" in data
 
 
+def test_reel_social_status(client):
+    r = client.get("/api/v1/reel/social/status")
+    assert r.status_code == 200
+    data = r.json()
+    assert "platforms" in data
+    assert "instagram" in data["platforms"]
+    assert "oauth_hint" in data["platforms"]["instagram"]
+    assert "webhook_configured" in data
+    assert "accounts" in data
+    assert "oauth_providers" in data
+    assert "connect_all" in data
+
+
+def test_reel_social_accounts_crud(client):
+    r = client.get("/api/v1/reel/social/accounts")
+    assert r.status_code == 200
+    assert r.json()["accounts"] == []
+
+    r = client.delete("/api/v1/reel/social/accounts/does-not-exist")
+    assert r.status_code == 404
+
+    r = client.post("/api/v1/reel/social/accounts/does-not-exist/default")
+    assert r.status_code == 404
+
+
+def test_reel_oauth_start_unknown_provider(client):
+    r = client.get("/api/v1/reel/social/oauth/start/unknown?redirect=false")
+    assert r.status_code == 400
+
+
+def test_reel_oauth_start_all(client):
+    r = client.get("/api/v1/reel/social/oauth/start-all?label=test-bundle")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["label"] == "test-bundle"
+    assert len(data["connections"]) == 3
+
+
+def test_reel_dashboard_has_social_connect(client):
+    r = client.get("/reel")
+    assert r.status_code == 200
+    assert "Connect all" in r.text
+    assert "Social accounts" in r.text
+
+
+def test_reel_dashboard(client):
+    r = client.get("/reel")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    assert "BRAINIAC REEL-MAKER" in r.text
+
+
 def test_reel_compose_and_publish(client):
     r = client.post(
         "/api/v1/reel/compose",

@@ -158,12 +158,21 @@ class ReelComposeRequest(BaseModel):
     )
     niche_hashtags: list[str] = Field(default_factory=list, max_length=10)
     voiceover: bool = True
+    use_ai_script: bool | None = Field(
+        None,
+        description="Use NeuroCore for script generation (requires ANTHROPIC_API_KEY). "
+        "Defaults to auto when NeuroCore is configured.",
+    )
 
 
 class ReelPublishRequest(BaseModel):
     platforms: list[str] | None = None
     dry_run: bool | None = None
     schedule_at: float | None = None
+    account_ids: dict[str, str] | None = Field(
+        default=None,
+        description="Optional per-platform connected account id (instagram, tiktok, youtube, facebook)",
+    )
 
 
 class ReelJobResponse(BaseModel):
@@ -182,6 +191,9 @@ class ReelJobResponse(BaseModel):
     completed_at: float | None = None
     error: str | None = None
     progress_pct: float = 0.0
+    script_source: str = "template"
+    scheduled_publish_at: float | None = None
+    scheduled_platforms: list[str] | None = None
 
 
 # ── Generic ───────────────────────────────────────────────────────────────────
