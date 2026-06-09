@@ -23,7 +23,7 @@ def _print_banner() -> None:
     print("""
 ╔══════════════════════════════════════════════════════════════════╗
 ║         BRAINIAC AI — AUTONOMOUS SUPER INTELLIGENCE              ║
-║                        v1.3.0 REELMAKER                          ║
+║                        v1.4.0 REELMAKER                          ║
 ╚══════════════════════════════════════════════════════════════════╝
 """)
 

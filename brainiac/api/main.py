@@ -18,7 +18,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
@@ -43,6 +43,7 @@ from brainiac.api.models import (
     TTSRequest,
 )
 from brainiac.api.reel_dashboard import reel_dashboard_page
+from brainiac.api.social_connect import oauth_error_page, oauth_success_page
 from brainiac.core import (
     CreativeEngine,
     CyberShield,
@@ -59,6 +60,13 @@ from brainiac.core.neuro_core import CostLimitExceededError, ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
 from brainiac.core.reel_maker import HookType, Platform, ReelJob, ReelStyle
 from brainiac.core.satlink import SOSPriority
+from brainiac.core.social_accounts import get_social_store
+from brainiac.core.social_oauth import (
+    build_authorization_url,
+    handle_oauth_callback,
+    oauth_providers_status,
+    start_all_connections,
+)
 from brainiac.core.telemetry_hub import SensorReading
 from brainiac.watchdog import Watchdog
 
@@ -221,7 +229,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="BRAINIAC AI",
     description="Autonomous Super Intelligence System — REST + WebSocket API",
-    version="1.3.0",
+    version="1.4.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
@@ -329,14 +337,14 @@ async def security_middleware(request: Request, call_next):
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.3.0"}
+    return {"system": "BRAINIAC AI", "status": "ONLINE", "version": "1.4.0"}
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health():
     return HealthResponse(
         status="ONLINE",
-        version="1.3.0",
+        version="1.4.0",
         modules=dict(app.state.module_health),
         uptime_s=round(time.time() - _BOOT_TIME, 1),
     )
@@ -760,6 +768,88 @@ async def reel_social_status():
     return reel.social_status()
 
 
+@app.get("/api/v1/reel/social/accounts", tags=["REEL-MAKER"])
+async def list_social_accounts():
+    reel: ReelMaker = _modules()["reel"]
+    store = get_social_store(reel._output_dir)
+    return {"accounts": store.list_public()}
+
+
+@app.delete("/api/v1/reel/social/accounts/{account_id}", tags=["REEL-MAKER"])
+async def delete_social_account(account_id: str):
+    reel: ReelMaker = _modules()["reel"]
+    store = get_social_store(reel._output_dir)
+    if not store.remove_account(account_id):
+        raise HTTPException(status_code=404, detail="Social account not found")
+    return {"account_id": account_id, "deleted": True}
+
+
+@app.post("/api/v1/reel/social/accounts/{account_id}/default", tags=["REEL-MAKER"])
+async def set_default_social_account(account_id: str):
+    reel: ReelMaker = _modules()["reel"]
+    store = get_social_store(reel._output_dir)
+    try:
+        account = store.set_default(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return account.to_public(is_default=True)
+
+
+@app.get("/api/v1/reel/social/oauth/providers", tags=["REEL-MAKER"])
+async def reel_oauth_providers():
+    return {"providers": oauth_providers_status(), "connect_all": start_all_connections()}
+
+
+@app.get("/api/v1/reel/social/oauth/start-all", tags=["REEL-MAKER"])
+async def reel_oauth_start_all(label: str = "default", group_id: str | None = None):
+    return start_all_connections(label=label, group_id=group_id)
+
+
+@app.get("/api/v1/reel/social/oauth/start/{provider}", tags=["REEL-MAKER"])
+async def reel_oauth_start(
+    provider: str,
+    label: str = "default",
+    group_id: str | None = None,
+    return_to: str | None = None,
+    redirect: bool = True,
+):
+    reel: ReelMaker = _modules()["reel"]
+    try:
+        url = build_authorization_url(
+            provider,
+            output_dir=reel._output_dir,
+            label=label,
+            group_id=group_id,
+            return_to=return_to,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if redirect:
+        return RedirectResponse(url, status_code=302)
+    return {"authorization_url": url, "provider": provider, "label": label, "group_id": group_id}
+
+
+@app.get("/api/v1/reel/social/oauth/callback/{provider}", tags=["REEL-MAKER"])
+async def reel_oauth_callback(provider: str, code: str | None = None, state: str | None = None):
+    if not code or not state:
+        return oauth_error_page("Missing OAuth code or state.")
+    reel: ReelMaker = _modules()["reel"]
+    try:
+        result = await handle_oauth_callback(
+            provider,
+            code=code,
+            state=state,
+            output_dir=reel._output_dir,
+        )
+    except ValueError as exc:
+        return oauth_error_page(str(exc))
+    return oauth_success_page(
+        provider=provider,
+        accounts=result.get("accounts", []),
+        return_to=str(result.get("return_to") or "/reel"),
+    )
+
+
 @app.get("/api/v1/reel/platforms", tags=["REEL-MAKER"])
 async def reel_platforms():
     reel: ReelMaker = _modules()["reel"]
@@ -822,6 +912,7 @@ async def publish_reel(job_id: str, req: ReelPublishRequest | None = None):
             platforms=platforms,
             schedule_at=req.schedule_at,
             dry_run=req.dry_run,
+            account_ids=req.account_ids,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

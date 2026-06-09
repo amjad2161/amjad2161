@@ -97,6 +97,31 @@ REEL_DASHBOARD_HTML = """<!DOCTYPE html>
     .pill.ready { color: var(--ok); }
     .pill.failed { color: var(--danger); }
     .social { font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+    .connect-row { display: flex; gap: 0.35rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .connect-row button { width: auto; flex: 1 1 auto; min-width: 7rem; margin: 0; font-size: 0.8rem; }
+    .provider-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.5rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      font-size: 0.75rem;
+      margin: 0.2rem 0.25rem 0.2rem 0;
+    }
+    .provider-pill.off { opacity: 0.55; }
+    .provider-pill .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: var(--danger); }
+    .provider-pill .dot.on { background: var(--ok); }
+    .account-list { margin-top: 0.75rem; font-size: 0.8rem; }
+    .account-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .account-meta { color: var(--muted); font-size: 0.72rem; }
     .actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
     .actions button { width: auto; padding: 0.25rem 0.55rem; margin: 0; font-size: 0.75rem; }
     a { color: var(--accent); }
@@ -145,6 +170,21 @@ REEL_DASHBOARD_HTML = """<!DOCTYPE html>
         <button type="submit" id="compose-btn">Compose reel</button>
         <div id="status"></div>
       </form>
+      <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0;" />
+      <h2 style="margin:0 0 0.5rem;font-size:1rem;">Social accounts</h2>
+      <p class="social" style="margin:0 0 0.5rem;">
+        Connect Instagram, Facebook, TikTok, and YouTube in one bundle — automation uses the same linked accounts.
+      </p>
+      <div class="row">
+        <label for="connect-label">Bundle label</label>
+        <input id="connect-label" type="text" value="default" placeholder="default" />
+      </div>
+      <div class="connect-row">
+        <button type="button" id="connect-all-btn">Connect all</button>
+        <button type="button" class="secondary" id="refresh-social-btn">Refresh</button>
+      </div>
+      <div id="oauth-providers" class="connect-row"></div>
+      <div id="account-list" class="account-list">Loading accounts…</div>
     </section>
     <section class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;">
@@ -184,18 +224,119 @@ REEL_DASHBOARD_HTML = """<!DOCTYPE html>
       return [...document.querySelectorAll('input[name="platform"]:checked')].map((el) => el.value);
     }
 
+    function connectLabel() {
+      return document.getElementById('connect-label').value.trim() || 'default';
+    }
+
+    function oauthStartUrl(path, groupId) {
+      const q = new URLSearchParams({
+        label: connectLabel(),
+        return_to: '/reel',
+      });
+      if (groupId) q.set('group_id', groupId);
+      return `${path}?${q.toString()}`;
+    }
+
     async function loadSocial() {
       const r = await api('/api/v1/reel/social/status');
       const data = await r.json();
       const ready = Object.entries(data.platforms || {})
         .filter(([, v]) => v.configured)
         .map(([k]) => k);
+      const connected = (data.accounts || []).length;
       const summary = document.getElementById('social-summary');
       summary.innerHTML = [
+        connected ? `${connected} account(s) connected` : 'No OAuth accounts',
         data.webhook_configured ? 'Webhook: on' : 'Webhook: off',
         data.public_base_url_configured ? 'Public URL: set' : 'Public URL: missing (Instagram)',
         ready.length ? `Live: ${ready.join(', ')}` : 'Live publish: dry-run only',
       ].join(' · ');
+
+      const providersEl = document.getElementById('oauth-providers');
+      const providers = data.oauth_providers || {};
+      providersEl.innerHTML = Object.entries(providers).map(([key, p]) => {
+        const cls = p.configured ? 'on' : '';
+        const title = p.configured ? p.label : `${p.label} (set app credentials in .env)`;
+        return `<button type="button" class="secondary provider-connect" data-provider="${key}" data-ready="${p.configured}" title="${title}">${p.label}</button>`;
+      }).join('');
+      providersEl.querySelectorAll('.provider-connect').forEach((btn) => {
+        btn.addEventListener('click', () => connectProvider(btn.dataset.provider, btn.dataset.ready === 'true'));
+      });
+
+      window.__connectAllBundle = data.connect_all || null;
+      renderAccounts(data.accounts || []);
+    }
+
+    function renderAccounts(accounts) {
+      const el = document.getElementById('account-list');
+      if (!accounts.length) {
+        el.innerHTML = '<div class="social">No connected accounts yet. Use Connect all or pick a provider above.</div>';
+        return;
+      }
+      el.innerHTML = accounts.map((acc) => {
+        const def = acc.is_default ? '<span class="pill ready">default</span> ' : '';
+        const expired = acc.token_expired ? '<span class="pill failed">expired</span> ' : '';
+        const extra = acc.extra?.page_name || acc.extra?.channel_title || acc.extra?.username || '';
+        return `<div class="account-item" data-id="${acc.id}">
+          <div>
+            <div><strong>${acc.platform}</strong> ${def}${expired}</div>
+            <div>${acc.label}</div>
+            <div class="account-meta">${extra ? extra + ' · ' : ''}${acc.id.slice(0, 8)}…</div>
+          </div>
+          <div class="actions">
+            ${acc.is_default ? '' : `<button type="button" class="secondary" data-default="${acc.id}">Default</button>`}
+            <button type="button" class="secondary" data-disconnect="${acc.id}">Remove</button>
+          </div>
+        </div>`;
+      }).join('');
+      el.querySelectorAll('[data-disconnect]').forEach((btn) => {
+        btn.addEventListener('click', () => disconnectAccount(btn.dataset.disconnect));
+      });
+      el.querySelectorAll('[data-default]').forEach((btn) => {
+        btn.addEventListener('click', () => setDefaultAccount(btn.dataset.default));
+      });
+    }
+
+    async function connectProvider(provider, ready) {
+      if (!ready) {
+        setStatus(`OAuth app not configured for ${provider}. Set credentials in .env`, true);
+        return;
+      }
+      const bundle = window.__connectAllBundle;
+      const groupId = bundle?.group_id || null;
+      window.location.href = oauthStartUrl(`/api/v1/reel/social/oauth/start/${provider}`, groupId);
+    }
+
+    async function connectAll() {
+      const r = await api(`/api/v1/reel/social/oauth/start-all?label=${encodeURIComponent(connectLabel())}`);
+      const bundle = await r.json();
+      window.__connectAllBundle = bundle;
+      const pending = (bundle.connections || []).filter((c) => c.configured);
+      if (!pending.length) {
+        setStatus('No OAuth apps configured. Add META/GOOGLE/TIKTOK credentials to .env', true);
+        return;
+      }
+      const first = pending[0];
+      window.location.href = oauthStartUrl(first.start_url.split('?')[0], bundle.group_id);
+    }
+
+    async function disconnectAccount(accountId) {
+      if (!confirm('Disconnect this account?')) return;
+      const r = await api(`/api/v1/reel/social/accounts/${accountId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        setStatus('Could not remove account', true);
+        return;
+      }
+      await loadSocial();
+    }
+
+    async function setDefaultAccount(accountId) {
+      const r = await api(`/api/v1/reel/social/accounts/${accountId}/default`, { method: 'POST' });
+      if (!r.ok) {
+        setStatus('Could not set default account', true);
+        return;
+      }
+      await loadSocial();
     }
 
     function pill(status) {
@@ -290,6 +431,8 @@ REEL_DASHBOARD_HTML = """<!DOCTYPE html>
     });
 
     document.getElementById('refresh-btn').addEventListener('click', loadJobs);
+    document.getElementById('refresh-social-btn').addEventListener('click', loadSocial);
+    document.getElementById('connect-all-btn').addEventListener('click', connectAll);
     loadSocial();
     loadJobs();
   </script>

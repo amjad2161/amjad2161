@@ -245,6 +245,11 @@ def test_social_status_without_tokens(reel_maker: ReelMaker) -> None:
     assert status["platforms"]["instagram"]["configured"] is False
     assert "INSTAGRAM_ACCESS_TOKEN" in status["platforms"]["instagram"]["missing_env"]
     assert status["platforms"]["instagram"]["oauth_hint"]
+    assert status["accounts"] == []
+    assert "oauth_providers" in status
+    assert "meta" in status["oauth_providers"]
+    assert "connect_all" in status
+    assert status["connect_all"]["group_id"]
 
 
 @pytest.mark.asyncio

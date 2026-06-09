@@ -1,3 +1,12 @@
+## [1.4.0] – One-click social account connection
+
+- Encrypted on-disk store for OAuth-connected publishing accounts (`{BRAINIAC_REEL_OUTPUT_DIR}/social/accounts.json.enc`).
+- OAuth flows for Meta (Instagram + Facebook), YouTube (Google), and TikTok with shared `group_id` bundles.
+- REST: list/delete/set-default accounts, OAuth start/callback, `connect_all` bundle metadata.
+- `publish()` resolves credentials from connected accounts (with env fallback) and accepts per-platform `account_ids`.
+- Dashboard at `/reel`: Connect all, per-provider connect, account list, disconnect, set default.
+- Extended `GET /api/v1/reel/social/status` with `accounts`, `oauth_providers`, and `connect_all`.
+
 ## [1.3.0] – REELMAKER webhooks, social status, dashboard
 
 - HTTP webhook callbacks on `compose.ready`, `compose.failed`, `publish.scheduled`, and `publish.completed` (`BRAINIAC_REEL_WEBHOOK_URL`, optional HMAC secret).

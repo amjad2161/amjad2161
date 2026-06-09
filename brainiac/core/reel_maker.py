@@ -27,6 +27,8 @@ import numpy as np
 import structlog
 from PIL import Image, ImageDraw, ImageFont
 
+from brainiac.core.social_accounts import get_social_store
+
 log = structlog.get_logger("brainiac.reel_maker")
 
 OUTPUT_DIR = Path(os.getenv("BRAINIAC_REEL_OUTPUT_DIR", "/tmp/brainiac-reels"))
@@ -567,6 +569,7 @@ class ReelMaker:
         *,
         schedule_at: float | None = None,
         dry_run: bool | None = None,
+        account_ids: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         job = self._jobs.get(job_id)
         if not job:
@@ -599,7 +602,11 @@ class ReelMaker:
         results: dict[str, Any] = {}
         for platform in targets:
             adapter = self._publisher_for(platform)
-            payload = self._build_publish_payload(job, platform)
+            payload = self._build_publish_payload(
+                job,
+                platform,
+                account_id=(account_ids or {}).get(platform.value),
+            )
             if schedule_at:
                 payload["scheduled_at"] = schedule_at
             result = await adapter(payload, dry_run=use_dry_run)
@@ -1158,14 +1165,38 @@ class ReelMaker:
 
     # ── Social publishing ─────────────────────────────────────────────────────
 
+    def _social_store(self):
+        return get_social_store(self._output_dir)
+
     def _any_platform_configured(self) -> bool:
-        keys = (
-            "INSTAGRAM_ACCESS_TOKEN",
-            "TIKTOK_ACCESS_TOKEN",
-            "YOUTUBE_ACCESS_TOKEN",
-            "FACEBOOK_ACCESS_TOKEN",
-        )
-        return any(os.getenv(k) for k in keys)
+        return self._social_store().any_platform_configured()
+
+    def _env_credentials(self, platform: Platform) -> dict[str, str]:
+        env = _SOCIAL_ENV[platform]
+        creds: dict[str, str] = {}
+        token = os.getenv(env["token"])
+        if token:
+            creds["access_token"] = token
+        extra_key = env.get("extra")
+        if extra_key:
+            extra_val = os.getenv(extra_key)
+            if extra_val:
+                if platform == Platform.INSTAGRAM:
+                    creds["user_id"] = extra_val
+                elif platform == Platform.FACEBOOK:
+                    creds["page_id"] = extra_val
+        return creds
+
+    def _resolve_credentials(
+        self,
+        platform: Platform,
+        account_id: str | None = None,
+    ) -> dict[str, str]:
+        store = self._social_store()
+        creds = store.credentials_for_platform(platform.value, account_id=account_id)
+        if creds:
+            return creds
+        return self._env_credentials(platform)
 
     def _publisher_for(self, platform: Platform) -> Callable[..., Any]:
         return {
@@ -1175,11 +1206,18 @@ class ReelMaker:
             Platform.FACEBOOK: self._publish_facebook,
         }[platform]
 
-    def _build_publish_payload(self, job: ReelJob, platform: Platform) -> dict[str, Any]:
+    def _build_publish_payload(
+        self,
+        job: ReelJob,
+        platform: Platform,
+        *,
+        account_id: str | None = None,
+    ) -> dict[str, Any]:
         assert job.script is not None
         video_url = ""
         if PUBLIC_BASE_URL:
             video_url = f"{PUBLIC_BASE_URL}/api/v1/reel/jobs/{job.job_id}/video"
+        credentials = self._resolve_credentials(platform, account_id)
         return {
             "video_path": job.video_path,
             "video_url": video_url,
@@ -1189,11 +1227,14 @@ class ReelMaker:
             "thumbnail_path": job.thumbnail_path,
             "job_id": job.job_id,
             "platform": platform.value,
+            "credentials": credentials,
+            "account_id": account_id,
         }
 
     async def _publish_instagram(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("INSTAGRAM_ACCESS_TOKEN")
-        user_id = os.getenv("INSTAGRAM_USER_ID")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
+        user_id = creds.get("user_id")
         if dry_run or not token or not user_id:
             return self._dry_run_result(Platform.INSTAGRAM, payload)
         return await self._http_publish(
@@ -1208,7 +1249,8 @@ class ReelMaker:
         )
 
     async def _publish_tiktok(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("TIKTOK_ACCESS_TOKEN")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
         if dry_run or not token:
             return self._dry_run_result(Platform.TIKTOK, payload)
         video_path = payload.get("video_path")
@@ -1281,7 +1323,8 @@ class ReelMaker:
             return {"platform": Platform.TIKTOK.value, "status": "error", "error": str(exc)}
 
     async def _publish_youtube(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("YOUTUBE_ACCESS_TOKEN")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
         if dry_run or not token:
             return self._dry_run_result(Platform.YOUTUBE, payload)
         video_path = payload.get("video_path")
@@ -1354,8 +1397,9 @@ class ReelMaker:
             return {"platform": Platform.YOUTUBE.value, "status": "error", "error": str(exc)}
 
     async def _publish_facebook(self, payload: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
-        token = os.getenv("FACEBOOK_ACCESS_TOKEN")
-        page_id = os.getenv("FACEBOOK_PAGE_ID")
+        creds = payload.get("credentials") or {}
+        token = creds.get("access_token")
+        page_id = creds.get("page_id")
         if dry_run or not token or not page_id:
             return self._dry_run_result(Platform.FACEBOOK, payload)
         video_url = payload.get("video_url") or ""
@@ -1478,36 +1522,55 @@ class ReelMaker:
         return bool(WEBHOOK_URL)
 
     def social_status(self) -> dict[str, Any]:
+        from brainiac.core.social_oauth import oauth_providers_status, start_all_connections
+
+        store = self._social_store()
+        public_accounts = store.list_public()
+        accounts_by_platform: dict[str, list[dict[str, Any]]] = {p.value: [] for p in Platform}
+        for account in public_accounts:
+            accounts_by_platform.setdefault(account["platform"], []).append(account)
+
         platforms: dict[str, Any] = {}
         for platform in Platform:
             env = _SOCIAL_ENV[platform]
             token_set = bool(os.getenv(env["token"]))
             extra_key = env.get("extra")
             extra_set = bool(os.getenv(extra_key)) if extra_key else True
+            connected = accounts_by_platform.get(platform.value, [])
+            default_account = store.get_default(platform.value)
+            store_ready = default_account is not None and not (
+                default_account.expires_at and default_account.expires_at <= time.time()
+            )
             missing: list[str] = []
-            if not token_set:
+            if not token_set and not connected:
                 missing.append(env["token"])
-            if extra_key and not extra_set:
+            if extra_key and not extra_set and not connected:
                 missing.append(extra_key)
             if platform == Platform.INSTAGRAM and not PUBLIC_BASE_URL:
                 missing.append("BRAINIAC_REEL_PUBLIC_BASE_URL")
+            ready_for_live = (store_ready or (token_set and extra_set)) and (
+                platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)
+            )
             platforms[platform.value] = {
-                "configured": token_set
-                and extra_set
-                and (platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)),
-                "token_set": token_set,
-                "ready_for_live": token_set
-                and extra_set
-                and (platform != Platform.INSTAGRAM or bool(PUBLIC_BASE_URL)),
+                "configured": ready_for_live,
+                "token_set": token_set or bool(connected),
+                "ready_for_live": ready_for_live,
+                "connected_accounts": len(connected),
+                "default_account_id": default_account.id if default_account else None,
                 "missing_env": missing,
                 "oauth_hint": _SOCIAL_OAUTH_HINTS[platform],
             }
+        oauth_start = start_all_connections()
         return {
             "webhook_configured": self._webhook_configured(),
             "webhook_url_set": bool(WEBHOOK_URL),
             "webhook_secret_set": bool(WEBHOOK_SECRET),
             "public_base_url_configured": bool(PUBLIC_BASE_URL),
             "live_publish_ready": self._any_platform_configured(),
+            "accounts": public_accounts,
+            "accounts_by_platform": accounts_by_platform,
+            "oauth_providers": oauth_providers_status(),
+            "connect_all": oauth_start,
             "platforms": platforms,
         }
 
@@ -1536,7 +1599,7 @@ class ReelMaker:
         if extra:
             payload.update(extra)
         body = json.dumps(payload, separators=(",", ":"), default=str).encode()
-        headers = {"Content-Type": "application/json", "User-Agent": "BRAINIAC-REEL-MAKER/1.3"}
+        headers = {"Content-Type": "application/json", "User-Agent": "BRAINIAC-REEL-MAKER/1.4"}
         if WEBHOOK_SECRET:
             sig = hmac.new(WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
             headers["X-Brainiac-Signature"] = f"sha256={sig}"

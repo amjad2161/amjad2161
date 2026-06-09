@@ -169,6 +169,10 @@ class ReelPublishRequest(BaseModel):
     platforms: list[str] | None = None
     dry_run: bool | None = None
     schedule_at: float | None = None
+    account_ids: dict[str, str] | None = Field(
+        default=None,
+        description="Optional per-platform connected account id (instagram, tiktok, youtube, facebook)",
+    )
 
 
 class ReelJobResponse(BaseModel):
