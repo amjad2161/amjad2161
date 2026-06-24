@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install ruff mypy pytest pytest-asyncio pytest-cov
+          pip install ruff mypy pytest pytest-asyncio pytest-cov pip-audit cyclonedx-bom
 
       - name: Ruff check
         run: ruff check .
@@ -46,7 +46,25 @@ jobs:
         env:
           ANTHROPIC_API_KEY: dummy-key-for-ci
           BRAINIAC_SECRET: ci-test-secret
+          BRAINIAC_API_KEYS: ci-key
+          BRAINIAC_ADMIN_API_KEYS: ci-admin-key
         run: pytest -q
+
+      - name: pip-audit
+        if: matrix.python-version == '3.11'
+        continue-on-error: true
+        run: pip-audit
+
+      - name: Generate CycloneDX SBOM
+        if: matrix.python-version == '3.11'
+        run: cyclonedx-py environment --output-format JSON --output-file sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        if: (success() || failure()) && matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyclonedx-sbom-${{ matrix.python-version }}
+          path: sbom.cdx.json
 
       - name: Upload coverage
         if: always() && matrix.python-version == '3.11'

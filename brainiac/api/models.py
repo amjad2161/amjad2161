@@ -138,6 +138,101 @@ class PublishRequest(BaseModel):
     qos: int = Field(1, ge=0, le=2)
 
 
+# ── QUANTUM-MIND ──────────────────────────────────────────────────────────────
+
+
+class ScenarioInput(BaseModel):
+    description: str
+    probability: float = Field(0.5, ge=0.0, le=1.0)
+    utility: float = Field(0.5)
+    risk: float = Field(0.0, ge=0.0, le=1.0)
+    tags: list[str] = []
+
+
+class SuperposeRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000)
+    scenarios: list[ScenarioInput] = Field(..., min_length=2)
+    strategy: str = Field(
+        "max_expected_value",
+        pattern="^(max_probability|weighted_random|min_risk|max_expected_value)$",
+    )
+
+
+class CollapseRequest(BaseModel):
+    superposition_id: str
+
+
+class DecisionMatrixRequest(BaseModel):
+    options: list[str] = Field(..., min_length=2)
+    criteria: list[str] = Field(..., min_length=1)
+    scores: dict[str, dict[str, float]]
+    weights: list[float] | None = None
+
+
+class PredictRequest(BaseModel):
+    variable: str = Field(..., min_length=1, max_length=200)
+    history: list[float] = Field(..., min_length=2)
+    horizon: int = Field(10, ge=1, le=100)
+    alpha: float = Field(0.3, ge=0.01, le=0.99)
+    confidence: float = Field(0.95, ge=0.5, le=0.99)
+
+
+# ── EMOTION-ENGINE ────────────────────────────────────────────────────────────
+
+
+class SentimentRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000)
+
+
+class EmpathizeRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10000)
+
+
+class AdaptMessageRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=5000)
+    tone: str = Field(
+        "formal",
+        pattern="^(formal|empathetic|encouraging|analytical|urgent|playful|reassuring)$",
+    )
+
+
+class PersonalityRequest(BaseModel):
+    text_samples: list[str] = Field(..., min_length=1)
+
+
+# ── NEURAL-MATRIX ──────────────────────────────────────────────────────────────
+
+
+class SpawnAgentRequest(BaseModel):
+    role: str = Field(
+        ...,
+        pattern="^(analyst|strategist|executor|critic|coordinator|researcher|sentinel|oracle)$",
+    )
+    name: str | None = None
+    capabilities: list[str] = []
+    expertise: float = Field(0.8, ge=0.0, le=1.0)
+
+
+class DecomposeTaskRequest(BaseModel):
+    root_task: str = Field(..., min_length=1, max_length=2000)
+    subtasks: list[dict[str, Any]]
+
+
+class VoteRequest(BaseModel):
+    proposal: str = Field(..., min_length=1, max_length=1000)
+    options: list[str] = Field(..., min_length=2)
+    method: str = Field(
+        "majority",
+        pattern="^(majority|supermajority|weighted|unanimous|borda)$",
+    )
+
+
+class BallotRequest(BaseModel):
+    vote_id: str
+    agent_id: str
+    choice: Any  # str or list[str] depending on method
+
+
 # ── Generic ───────────────────────────────────────────────────────────────────
 
 

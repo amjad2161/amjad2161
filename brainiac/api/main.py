@@ -20,36 +20,55 @@ from fastapi.responses import JSONResponse, Response
 from sse_starlette.sse import EventSourceResponse
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
+from brainiac.api.auth import API_KEY_HEADER, parse_keys, require_api_key
 from brainiac.api.models import (
+    AdaptMessageRequest,
+    BallotRequest,
+    CollapseRequest,
+    DecisionMatrixRequest,
+    DecomposeTaskRequest,
     DetectLanguageRequest,
+    EmpathizeRequest,
     HealthResponse,
     ImagePromptRequest,
+    PersonalityRequest,
+    PredictRequest,
     PublishRequest,
     RegisterDeviceRequest,
     RouteRequest,
     RouteResponse,
     SensorReadingRequest,
+    SentimentRequest,
     SOSRequest,
     SOSResponse,
+    SpawnAgentRequest,
+    SuperposeRequest,
     TelemetryIngestResponse,
     ThinkRequest,
     ThinkResponse,
     TranslateRequest,
     TTSRequest,
+    VoteRequest,
 )
 from brainiac.core import (
     CreativeEngine,
     CyberShield,
+    EmotionEngine,
+    NeuralMatrix,
     NeuroCore,
     NexusSync,
     OmniVision,
     OrbitalNav,
+    QuantumMind,
     SatLink,
     SonicMatrix,
     TelemetryHub,
 )
+from brainiac.core.emotion_engine import CommunicationTone
+from brainiac.core.neural_matrix import AgentRole, VoteMethod
 from brainiac.core.neuro_core import CostLimitExceededError, ReasoningDepth
 from brainiac.core.orbital_nav import Coordinate, TransportMode
+from brainiac.core.quantum_mind import CollapseStrategy
 from brainiac.core.satlink import SOSPriority
 from brainiac.core.telemetry_hub import SensorReading
 from brainiac.watchdog import Watchdog
@@ -57,6 +76,12 @@ from brainiac.watchdog import Watchdog
 log = structlog.get_logger("brainiac.api")
 _BOOT_TIME = time.time()
 _MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024
+# Sensitive operational and security endpoints that should require API-key auth.
+_PROTECTED_PREFIXES = ("/api/v1/system/", "/api/v1/security/")
+_ADMIN_ONLY_PATHS = {"/api/v1/system/shutdown-test", "/api/v1/security/audit-config"}
+# Empty string is intentional so missing/blank secrets also trigger warnings.
+_DEFAULT_SECRETS = {"", "default", "changeme", "CHANGE-IN-PRODUCTION", "BRAINIAC-DEFAULT-CHANGE-ME"}
+_NODE_NAME = "GENESIS-1"
 
 
 def _build_modules() -> dict[str, Any]:
@@ -70,6 +95,9 @@ def _build_modules() -> dict[str, Any]:
         "shield": CyberShield(secret_key=os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION")),
         "creative": CreativeEngine(),
         "vision": OmniVision(),
+        "quantum": QuantumMind(),
+        "emotion": EmotionEngine(),
+        "matrix": NeuralMatrix(),
     }
 
 
@@ -86,6 +114,9 @@ def _module_factories() -> dict[str, Any]:
         ),
         "creative": CreativeEngine,
         "vision": OmniVision,
+        "quantum": QuantumMind,
+        "emotion": EmotionEngine,
+        "matrix": NeuralMatrix,
     }
 
 
@@ -100,6 +131,9 @@ def _module_health() -> dict[str, str]:
         "cyber_shield": "ONLINE",
         "creative_engine": "ONLINE",
         "omni_vision": "ONLINE",
+        "quantum_mind": "ONLINE",
+        "emotion_engine": "ONLINE",
+        "neural_matrix": "ONLINE",
     }
 
 
@@ -114,17 +148,29 @@ def _watchdog_health_map() -> dict[str, str]:
         "shield": "cyber_shield",
         "creative": "creative_engine",
         "vision": "omni_vision",
+        "quantum": "quantum_mind",
+        "emotion": "emotion_engine",
+        "matrix": "neural_matrix",
     }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    secret = os.getenv("BRAINIAC_SECRET", "CHANGE-IN-PRODUCTION")
+    if secret in _DEFAULT_SECRETS:
+        log.warning("brainiac.security.default_secret")
+
+    api_keys = parse_keys(os.getenv("BRAINIAC_API_KEYS"))
+    admin_keys = parse_keys(os.getenv("BRAINIAC_ADMIN_API_KEYS"))
+    if not api_keys and not admin_keys:
+        log.warning("brainiac.security.api_keys_missing")
+
     app.state.modules = _build_modules()
     app.state.module_health = _module_health()
     app.state.active_stream_tasks = set()
     app.state.shutdown_event = asyncio.Event()
-    app.state.admin_header = os.getenv("BRAINIAC_ADMIN_HEADER", "X-BRAINIAC-Admin")
-    app.state.admin_token = os.getenv("BRAINIAC_ADMIN_TOKEN", "brainiac-admin")
+    app.state.api_keys = api_keys
+    app.state.admin_api_keys = admin_keys
     app.state.watchdog = Watchdog(
         modules=app.state.modules,
         factories=_module_factories(),
@@ -209,9 +255,12 @@ def _shield() -> CyberShield:
     return _modules()["shield"]
 
 
-def _is_admin(request: Request) -> bool:
-    header_name: str = app.state.admin_header
-    return request.headers.get(header_name) == app.state.admin_token
+def _is_protected_endpoint(path: str) -> bool:
+    return any(path.startswith(prefix) for prefix in _PROTECTED_PREFIXES)
+
+
+def _is_admin_endpoint(path: str) -> bool:
+    return path in _ADMIN_ONLY_PATHS
 
 
 async def _track_stream_task_start() -> asyncio.Task[Any] | None:
@@ -226,21 +275,44 @@ def _track_stream_task_end(task: asyncio.Task[Any] | None) -> None:
         app.state.active_stream_tasks.discard(task)
 
 
+def _set_security_headers(response: Response, request_id: str) -> Response:
+    response.headers["X-Request-Id"] = request_id
+    response.headers["X-BRAINIAC-Node"] = _NODE_NAME
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
+
+
+def _error_response(status_code: int, content: dict[str, Any], request_id: str) -> Response:
+    response = JSONResponse(status_code=status_code, content=content)
+    return _set_security_headers(response, request_id)
+
+
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
     client_ip = request.client.host if request.client else "0.0.0.0"
+    request_path = request.url.path
     shield = _shield()
+    protected = _is_protected_endpoint(request_path)
 
     clear_contextvars()
     bind_contextvars(request_id=request_id)
-    log.info("http.request", method=request.method, path=request.url.path)
+    log.info("http.request", method=request.method, path=request_path)
 
-    if not shield.check_rate_limit(client_ip):
-        return JSONResponse(
-            status_code=429,
-            content={"error": "Rate limit exceeded"},
-            headers={"X-Request-Id": request_id},
+    if protected:
+        try:
+            require_api_key(request, admin=_is_admin_endpoint(request_path))
+        except HTTPException as exc:
+            return _error_response(
+                status_code=exc.status_code, content={"detail": exc.detail}, request_id=request_id
+            )
+
+    rate_limit_key = request.headers.get(API_KEY_HEADER) if protected else None
+    rate_limit_identity = rate_limit_key or client_ip
+    if not shield.check_rate_limit(rate_limit_identity):
+        return _error_response(
+            status_code=429, content={"error": "Rate limit exceeded"}, request_id=request_id
         )
 
     if request.method in ("POST", "PUT", "PATCH"):
@@ -251,10 +323,10 @@ async def security_middleware(request: Request, call_next):
             body_str = body_bytes.decode("utf-8", errors="ignore")
             threat = shield.scan_input(body_str, source_ip=client_ip)
             if threat and threat.threat_level.value >= 3:
-                return JSONResponse(
+                return _error_response(
                     status_code=400,
                     content={"error": "Malicious input detected"},
-                    headers={"X-Request-Id": request_id},
+                    request_id=request_id,
                 )
 
             async def receive() -> dict[str, Any]:
@@ -262,19 +334,14 @@ async def security_middleware(request: Request, call_next):
 
             request = Request(request.scope, receive)
         except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-                headers={"X-Request-Id": request_id},
+            return _error_response(
+                status_code=exc.status_code, content={"detail": exc.detail}, request_id=request_id
             )
         except Exception:
             pass
 
     response = await call_next(request)
-    response.headers["X-Request-Id"] = request_id
-    response.headers["X-BRAINIAC-Node"] = "GENESIS-1"
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    _set_security_headers(response, request_id)
     log.info(
         "http.response", method=request.method, path=request.url.path, status=response.status_code
     )
@@ -309,6 +376,9 @@ async def diagnostics():
         "cyber_shield": modules["shield"].diagnostics(),
         "creative_engine": modules["creative"].diagnostics(),
         "omni_vision": modules["vision"].diagnostics(),
+        "quantum_mind": modules["quantum"].diagnostics(),
+        "emotion_engine": modules["emotion"].diagnostics(),
+        "neural_matrix": modules["matrix"].diagnostics(),
     }
 
 
@@ -329,10 +399,11 @@ async def watchdog_status():
 
 @app.post("/api/v1/system/shutdown-test", tags=["System"])
 async def shutdown_test(request: Request):
-    if not _is_admin(request):
-        raise HTTPException(status_code=403, detail="Admin header required")
     app.state.shutdown_event.set()
-    return {"marker": "shutdown_test_triggered", "request_id": request.headers.get("X-Request-Id")}
+    return {
+        "marker": "shutdown_test_triggered",
+        "request_id": request.headers.get("X-Request-Id"),
+    }
 
 
 @app.post("/api/v1/think", response_model=ThinkResponse, tags=["NEURO-CORE"])
@@ -677,3 +748,275 @@ async def image_info(request: Request):
     image_bytes = await request.body()
     _validate_request_size(None, len(image_bytes))
     return vision.image_info(image_bytes)
+
+
+# ── QUANTUM-MIND ──────────────────────────────────────────────────────────────
+
+
+@app.post("/api/v1/quantum/superpose", tags=["QUANTUM-MIND"])
+async def superpose(req: SuperposeRequest):
+    qm: QuantumMind = _modules()["quantum"]
+    try:
+        strategy = CollapseStrategy(req.strategy)
+    except ValueError:
+        strategy = CollapseStrategy.MAX_EXPECTED_VALUE
+    scenarios_raw = [s.model_dump() for s in req.scenarios]
+    sup = qm.superpose(req.query, scenarios_raw, strategy=strategy)
+    return {
+        "superposition_id": sup.superposition_id,
+        "query": sup.query,
+        "branches": len(sup.scenarios),
+        "total_probability": round(sup.total_probability, 6),
+        "strategy": sup.collapse_strategy.value,
+        "entropy": qm.entropy(sup.superposition_id),
+    }
+
+
+@app.post("/api/v1/quantum/collapse", tags=["QUANTUM-MIND"])
+async def collapse(req: CollapseRequest):
+    qm: QuantumMind = _modules()["quantum"]
+    try:
+        chosen = qm.collapse(req.superposition_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "scenario_id": chosen.scenario_id,
+        "description": chosen.description,
+        "probability": chosen.probability,
+        "utility": chosen.utility,
+        "risk": chosen.risk,
+        "expected_value": chosen.expected_value,
+        "risk_adjusted_value": chosen.risk_adjusted_value,
+    }
+
+
+@app.post("/api/v1/quantum/decision-matrix", tags=["QUANTUM-MIND"])
+async def decision_matrix(req: DecisionMatrixRequest):
+    qm: QuantumMind = _modules()["quantum"]
+    try:
+        dm = qm.decision_matrix(req.options, req.criteria, req.scores, req.weights)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "matrix_id": dm.matrix_id,
+        "ranked": [{"option": opt, "score": sc} for opt, sc in dm.ranked],
+        "winner": dm.ranked[0][0] if dm.ranked else None,
+    }
+
+
+@app.post("/api/v1/quantum/predict", tags=["QUANTUM-MIND"])
+async def quantum_predict(req: PredictRequest):
+    qm: QuantumMind = _modules()["quantum"]
+    try:
+        pred = qm.predict(req.variable, req.history, req.horizon, req.alpha, req.confidence)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "prediction_id": pred.prediction_id,
+        "variable": pred.variable,
+        "horizon_steps": pred.horizon_steps,
+        "values": pred.values,
+        "lower_bound": pred.lower_bound,
+        "upper_bound": pred.upper_bound,
+        "confidence": pred.confidence,
+        "method": pred.method,
+    }
+
+
+# ── EMOTION-ENGINE ────────────────────────────────────────────────────────────
+
+
+@app.post("/api/v1/emotion/sentiment", tags=["EMOTION-ENGINE"])
+async def sentiment(req: SentimentRequest):
+    emotion: EmotionEngine = _modules()["emotion"]
+    result = emotion.analyse_sentiment(req.text)
+    return {
+        "score": result.score,
+        "magnitude": result.magnitude,
+        "emotion": result.emotion.value,
+        "keywords": result.keywords,
+    }
+
+
+@app.post("/api/v1/emotion/empathize", tags=["EMOTION-ENGINE"])
+async def empathize(req: EmpathizeRequest):
+    emotion_mod: EmotionEngine = _modules()["emotion"]
+    emap = emotion_mod.empathize(req.text)
+    return {
+        "map_id": emap.map_id,
+        "detected_emotion": emap.user_emotion.value,
+        "response_tone": emap.response_tone.value,
+        "acknowledgement": emap.acknowledgement,
+        "action_suggestion": emap.action_suggestion,
+        "vad": {
+            "valence": emap.user_vad.valence,
+            "arousal": emap.user_vad.arousal,
+            "dominance": emap.user_vad.dominance,
+        },
+    }
+
+
+@app.post("/api/v1/emotion/adapt-message", tags=["EMOTION-ENGINE"])
+async def adapt_message(req: AdaptMessageRequest):
+    emotion_mod: EmotionEngine = _modules()["emotion"]
+    try:
+        tone = CommunicationTone(req.tone)
+    except ValueError:
+        tone = CommunicationTone.FORMAL
+    adapted = emotion_mod.adapt_message(req.message, tone)
+    return {"tone": tone.value, "adapted_message": adapted}
+
+
+@app.post("/api/v1/emotion/personality", tags=["EMOTION-ENGINE"])
+async def personality(req: PersonalityRequest):
+    emotion_mod: EmotionEngine = _modules()["emotion"]
+    try:
+        profile = emotion_mod.profile_personality(req.text_samples)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "profile_id": profile.profile_id,
+        "traits": profile.traits,
+        "dominant_trait": profile.dominant_trait.value,
+        "communication_preference": profile.communication_preference.value,
+    }
+
+
+@app.get("/api/v1/emotion/state", tags=["EMOTION-ENGINE"])
+async def emotional_state():
+    emotion_mod: EmotionEngine = _modules()["emotion"]
+    s = emotion_mod.current_state
+    return {
+        "valence": round(s.valence, 4),
+        "arousal": round(s.arousal, 4),
+        "dominance": round(s.dominance, 4),
+        "primary_emotion": s.primary.value,
+        "confidence": s.confidence,
+    }
+
+
+# ── NEURAL-MATRIX ──────────────────────────────────────────────────────────────
+
+
+@app.post("/api/v1/matrix/agents", tags=["NEURAL-MATRIX"])
+async def spawn_agent(req: SpawnAgentRequest):
+    nm: NeuralMatrix = _modules()["matrix"]
+    try:
+        role = AgentRole(req.role)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    agent = nm.spawn_agent(
+        role=role,
+        name=req.name,
+        capabilities=req.capabilities or None,
+        expertise=req.expertise,
+    )
+    return {
+        "agent_id": agent.agent_id,
+        "name": agent.name,
+        "role": agent.role.value,
+        "capabilities": agent.capabilities,
+        "expertise": agent.expertise,
+        "status": agent.status.value,
+    }
+
+
+@app.get("/api/v1/matrix/agents", tags=["NEURAL-MATRIX"])
+async def list_agents():
+    nm: NeuralMatrix = _modules()["matrix"]
+    return [
+        {
+            "agent_id": a.agent_id,
+            "name": a.name,
+            "role": a.role.value,
+            "status": a.status.value,
+            "expertise": a.expertise,
+            "success_rate": round(a.success_rate, 4),
+        }
+        for a in nm._agents.values()
+    ]
+
+
+@app.delete("/api/v1/matrix/agents/{agent_id}", tags=["NEURAL-MATRIX"])
+async def terminate_agent(agent_id: str):
+    nm: NeuralMatrix = _modules()["matrix"]
+    removed = nm.terminate_agent(agent_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Agent {agent_id!r} not found")
+    return {"terminated": agent_id}
+
+
+@app.post("/api/v1/matrix/tasks/decompose", tags=["NEURAL-MATRIX"])
+async def decompose_task(req: DecomposeTaskRequest):
+    nm: NeuralMatrix = _modules()["matrix"]
+    try:
+        graph = nm.decompose_task(req.root_task, req.subtasks)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "graph_id": graph.graph_id,
+        "root_task": graph.root_task,
+        "subtasks": len(graph.subtasks),
+        "completion_rate": graph.completion_rate,
+    }
+
+
+@app.post("/api/v1/matrix/tasks/{graph_id}/execute", tags=["NEURAL-MATRIX"])
+async def execute_swarm(graph_id: str):
+    nm: NeuralMatrix = _modules()["matrix"]
+    try:
+        result = await nm.execute_swarm(graph_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "swarm_id": result.swarm_id,
+        "task_graph_id": result.task_graph_id,
+        "consensus": result.consensus,
+        "confidence": result.confidence,
+        "total_agents": result.total_agents,
+        "elapsed_ms": result.elapsed_ms,
+        "outputs": result.outputs,
+    }
+
+
+@app.post("/api/v1/matrix/votes", tags=["NEURAL-MATRIX"])
+async def open_vote(req: VoteRequest):
+    nm: NeuralMatrix = _modules()["matrix"]
+    try:
+        method = VoteMethod(req.method)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    vote = nm.open_vote(req.proposal, req.options, method)
+    return {
+        "vote_id": vote.vote_id,
+        "proposal": vote.proposal,
+        "options": vote.options,
+        "method": vote.method.value,
+    }
+
+
+@app.post("/api/v1/matrix/votes/ballot", tags=["NEURAL-MATRIX"])
+async def cast_ballot(req: BallotRequest):
+    nm: NeuralMatrix = _modules()["matrix"]
+    ok = nm.cast_ballot(req.vote_id, req.agent_id, req.choice)
+    if not ok:
+        raise HTTPException(
+            status_code=400, detail="Could not cast ballot — vote or agent not found"
+        )
+    return {"recorded": True, "vote_id": req.vote_id, "agent_id": req.agent_id}
+
+
+@app.post("/api/v1/matrix/votes/{vote_id}/resolve", tags=["NEURAL-MATRIX"])
+async def resolve_vote(vote_id: str, quorum: float = 0.51):
+    nm: NeuralMatrix = _modules()["matrix"]
+    try:
+        vote = nm.resolve_vote(vote_id, quorum)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "vote_id": vote.vote_id,
+        "result": vote.result,
+        "tally": vote.tally,
+        "quorum_met": vote.quorum_met,
+        "resolved": vote.resolved,
+    }
